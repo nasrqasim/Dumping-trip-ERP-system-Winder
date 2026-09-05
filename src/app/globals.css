@@ -1,0 +1,211 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+/* Scrollbar customization */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Printing styles */
+@media print {
+  @page {
+    size: auto;
+    margin: 8mm 6mm 10mm 6mm;
+  }
+
+  html, body {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    font-size: 9pt !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  /* Force all scrollable containers and flex parents to expand vertically */
+  *, *::before, *::after {
+    overflow: visible !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+    hyphens: none !important;
+  }
+
+  .h-screen, .h-full, .min-h-screen, .overflow-hidden, .overflow-y-auto, .overflow-x-auto, main, aside, nav, div {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-only {
+    display: block !important;
+  }
+  
+  .print-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+    overflow: visible !important;
+  }
+
+  .print-receipt {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    padding: 6px !important;
+    border: none !important;
+    font-size: 8pt !important;
+  }
+
+  .print-a4 {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+    overflow: visible !important;
+  }
+
+  /* Multi-page table layout */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto !important;
+    table-layout: auto !important;
+  }
+
+  thead {
+    display: table-header-group !important; /* Repeats table header on every page */
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    page-break-after: auto !important;
+  }
+
+  /* Table cell padding & font size for clear, in-line print layouts */
+  th, td {
+    padding: 3px 5px !important;
+    font-size: 8pt !important;
+    line-height: 1.25 !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+    hyphens: none !important;
+    vertical-align: middle !important;
+  }
+
+  /* Keep all table column headers strictly in one line */
+  th {
+    white-space: nowrap !important;
+    font-weight: 700 !important;
+    letter-spacing: normal !important;
+    text-transform: uppercase !important;
+  }
+
+  /* Numbers, currencies, dates, IDs, rates, phone numbers, and right-aligned cells: strictly one line */
+  td.text-right,
+  th.text-right,
+  .text-right,
+  .whitespace-nowrap,
+  .no-break,
+  .currency-val,
+  th.nowrap,
+  td.nowrap {
+    white-space: nowrap !important;
+  }
+
+  /* Prevent elements inside table cells from splitting words or dropping digits */
+  th *, td * {
+    word-break: normal !important;
+    overflow-wrap: normal !important;
+  }
+
+  /* Thermal Receipt Specific Sizing & Non-Breaking Table Values */
+  .print-receipt table th,
+  .print-receipt table td {
+    padding: 2px 2px !important;
+    font-size: 7.5pt !important;
+    line-height: 1.2 !important;
+  }
+
+  .print-receipt table th:not(:first-child),
+  .print-receipt table td:not(:first-child) {
+    white-space: nowrap !important;
+  }
+
+  .print-break-inside-avoid {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-break-before {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+
+  /* Centered printing footer */
+  .print-footer {
+    display: block !important;
+    width: 100% !important;
+    text-align: center !important;
+    font-size: 8pt !important;
+    font-weight: 600 !important;
+    color: #4b5563 !important; /* gray-600 */
+    border-top: 1px dashed #9ca3af !important;
+    padding-top: 6px !important;
+    margin-top: 16px !important;
+    background: white !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}
+
+/* Make sure print-only and print-footer are hidden on screen */
+.print-only {
+  display: none;
+}
+
+.print-footer {
+  display: none;
+}
