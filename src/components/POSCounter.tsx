@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getAllRecords, DBSale, DBCustomer, DBItem, DBBank } from '../db/indexedDB';
+import { getAllRecords, DBSale, DBCustomer, DBItem, DBBank } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances, saveSaleTransaction } from '../db/transactions';
 import { ShoppingCart, User, Plus, Search, Trash, Printer, History } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';

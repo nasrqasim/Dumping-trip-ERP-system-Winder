@@ -1,8 +1,15 @@
-// Database setup and typed wrappers for IndexedDB in the Norani Kanta ERP system
+import {
+  collection,
+  doc,
+  getDocs,
+  getDoc,
+  setDoc,
+  deleteDoc,
+  writeBatch
+} from 'firebase/firestore';
+import { db } from '../lib/firebase';
 
-export const DB_NAME = 'NoraniKantaERP_DB';
-export const DB_VERSION = 3;
-
+// Type definitions matching exact application schema
 export interface DBItem {
   id: string;
   name: string;
@@ -222,134 +229,129 @@ export interface DBVoucher {
   notes: string;
 }
 
-export type StoreName = 'items' | 'customers' | 'vendors' | 'vehicles' | 'banks' | 'staff' | 'trips' | 'purchases' | 'sales' | 'ledgers' | 'inventory_ledger' | 'general_expenses' | 'other_incomes' | 'staff_payments' | 'vouchers';
+export type StoreName =
+  | 'items'
+  | 'customers'
+  | 'vendors'
+  | 'vehicles'
+  | 'banks'
+  | 'staff'
+  | 'trips'
+  | 'purchases'
+  | 'sales'
+  | 'ledgers'
+  | 'inventory_ledger'
+  | 'general_expenses'
+  | 'other_incomes'
+  | 'staff_payments'
+  | 'vouchers';
 
-let dbInstance: IDBDatabase | null = null;
-
-// Initialize IndexedDB
-export function openDatabase(): Promise<IDBDatabase> {
-  if (dbInstance) {
-    return Promise.resolve(dbInstance);
+// Helper to sanitize JavaScript objects for Firestore (removes undefined values)
+export function sanitizeForFirestore<T>(data: T): any {
+  if (data === null || data === undefined) return null;
+  if (Array.isArray(data)) {
+    return data.map(item => sanitizeForFirestore(item)).filter(item => item !== undefined);
   }
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') {
-      reject(new Error('IndexedDB is only available in the browser'));
-      return;
-    }
-
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      dbInstance = request.result;
-      resolve(dbInstance);
-    };
-
-    request.onupgradeneeded = (event) => {
-      const db = request.result;
-
-      // Create object stores
-      const storeConfigs: { [key in StoreName]?: { keyPath: string } } = {
-        items: { keyPath: 'id' },
-        customers: { keyPath: 'id' },
-        vendors: { keyPath: 'id' },
-        vehicles: { keyPath: 'id' },
-        banks: { keyPath: 'id' },
-        staff: { keyPath: 'id' },
-        trips: { keyPath: 'id' },
-        purchases: { keyPath: 'id' },
-        sales: { keyPath: 'id' },
-        ledgers: { keyPath: 'id' },
-        inventory_ledger: { keyPath: 'id' },
-        general_expenses: { keyPath: 'id' },
-        other_incomes: { keyPath: 'id' },
-        staff_payments: { keyPath: 'id' },
-        vouchers: { keyPath: 'id' },
-      };
-
-      for (const name in storeConfigs) {
-        if (!db.objectStoreNames.contains(name)) {
-          const config = storeConfigs[name as StoreName];
-          if (config) {
-            db.createObjectStore(name, config);
-          }
-        }
+  if (typeof data === 'object' && !(data instanceof Date)) {
+    const clean: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) {
+        clean[key] = sanitizeForFirestore(value);
       }
-    };
-  });
+    }
+    return clean;
+  }
+  return data;
 }
 
-// Database Operations
 export async function getAllRecords<T>(storeName: StoreName): Promise<T[]> {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readonly');
-    const store = transaction.objectStore(storeName);
-    const request = store.getAll();
-
-    request.onsuccess = () => resolve(request.result as T[]);
-    request.onerror = () => reject(request.error);
-  });
+  try {
+    const colRef = collection(db, storeName);
+    const snap = await getDocs(colRef);
+    const records: T[] = [];
+    snap.forEach((docSnap) => {
+      const data = docSnap.data();
+      records.push({ ...data, id: docSnap.id } as unknown as T);
+    });
+    return records;
+  } catch (err) {
+    console.error('Error fetching collection ' + storeName + ' from Firestore:', err);
+    return [];
+  }
 }
 
 export async function getRecordById<T>(storeName: StoreName, id: string): Promise<T | null> {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readonly');
-    const store = transaction.objectStore(storeName);
-    const request = store.get(id);
-
-    request.onsuccess = () => resolve((request.result || null) as T | null);
-    request.onerror = () => reject(request.error);
-  });
+  if (!id) return null;
+  try {
+    const docRef = doc(db, storeName, id);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return { ...snap.data(), id: snap.id } as unknown as T;
+    }
+    return null;
+  } catch (err) {
+    console.error('Error fetching document ' + storeName + '/' + id + ' from Firestore:', err);
+    return null;
+  }
 }
 
-export async function addRecord<T>(storeName: StoreName, record: T): Promise<void> {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readwrite');
-    const store = transaction.objectStore(storeName);
-    const request = store.add(record);
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+export async function putRecord<T extends { id?: string }>(storeName: StoreName, record: T): Promise<void> {
+  try {
+    const cleanRecord = sanitizeForFirestore(record);
+    const docId = record.id;
+    if (!docId) {
+      const docRef = doc(collection(db, storeName));
+      await setDoc(docRef, { ...cleanRecord, id: docRef.id });
+    } else {
+      const docRef = doc(db, storeName, docId);
+      await setDoc(docRef, cleanRecord, { merge: true });
+    }
+  } catch (err) {
+    console.error('Error writing document to ' + storeName + ':', err);
+    throw err;
+  }
 }
 
-export async function putRecord<T>(storeName: StoreName, record: T): Promise<void> {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readwrite');
-    const store = transaction.objectStore(storeName);
-    const request = store.put(record);
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+export async function addRecord<T extends { id?: string }>(storeName: StoreName, record: T): Promise<void> {
+  return putRecord(storeName, record);
 }
 
 export async function deleteRecord(storeName: StoreName, id: string): Promise<void> {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readwrite');
-    const store = transaction.objectStore(storeName);
-    const request = store.delete(id);
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  if (!id) return;
+  try {
+    const docRef = doc(db, storeName, id);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.error('Error deleting document ' + storeName + '/' + id + ' from Firestore:', err);
+    throw err;
+  }
 }
 
 export async function clearStore(storeName: StoreName): Promise<void> {
-  const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction(storeName, 'readwrite');
-    const store = transaction.objectStore(storeName);
-    const request = store.clear();
-
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  try {
+    const colRef = collection(db, storeName);
+    const snap = await getDocs(colRef);
+    if (snap.empty) return;
+    
+    // Delete in batches (Firestore max 500 operations per batch)
+    let batch = writeBatch(db);
+    let count = 0;
+    for (const d of snap.docs) {
+      batch.delete(d.ref);
+      count++;
+      if (count === 400) {
+        await batch.commit();
+        batch = writeBatch(db);
+        count = 0;
+      }
+    }
+    if (count > 0) {
+      await batch.commit();
+    }
+  } catch (err) {
+    console.error('Error clearing collection ' + storeName + ' in Firestore:', err);
+    throw err;
+  }
 }
 
 // Auto-migration to ensure all items have clean sequential IDs (item-001, item-002, etc.)
@@ -359,14 +361,13 @@ export async function migrateItemIds(): Promise<void> {
   isItemMigrationRunning = true;
   try {
     const allItems = await getAllRecords<DBItem>('items');
-    // Specifically find 'dni4dkbmtoiknp4' or any items not starting with 'item-'
+    // Find 'dni4dkbmtoiknp4' or any legacy non-sequential item IDs
     const needsMigration = allItems.filter(i => i.id === 'dni4dkbmtoiknp4' || !i.id.startsWith('item-'));
     if (needsMigration.length === 0) {
       isItemMigrationRunning = false;
       return;
     }
 
-    // Find highest current item-XXX number
     let maxNum = 0;
     for (const item of allItems) {
       if (item.id && item.id.startsWith('item-')) {
@@ -381,18 +382,17 @@ export async function migrateItemIds(): Promise<void> {
       const oldId = item.id;
       let newId = '';
       if (oldId === 'dni4dkbmtoiknp4') {
-        // Specifically requested to be item-001
         const hasItem001 = allItems.some(i => i.id === 'item-001');
         if (!hasItem001) {
           newId = 'item-001';
           if (maxNum < 1) maxNum = 1;
         } else {
           maxNum += 1;
-          newId = `item-${String(maxNum).padStart(3, '0')}`;
+          newId = 'item-' + String(maxNum).padStart(3, '0');
         }
       } else {
         maxNum += 1;
-        newId = `item-${String(maxNum).padStart(3, '0')}`;
+        newId = 'item-' + String(maxNum).padStart(3, '0');
       }
 
       // 1. Put new item and delete old item
@@ -470,4 +470,3 @@ export async function migrateItemIds(): Promise<void> {
     isItemMigrationRunning = false;
   }
 }
-

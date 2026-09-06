@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getAllRecords, DBLedgerEntry, DBItem, DBCustomer, DBVendor, DBVehicle, DBStaff, DBTrip, DBPurchase, DBSale, DBGeneralExpense, DBOtherIncome, DBBank, DBInventoryLedgerEntry, DBVoucher } from '../db/indexedDB';
+import { getAllRecords, DBLedgerEntry, DBItem, DBCustomer, DBVendor, DBVehicle, DBStaff, DBTrip, DBPurchase, DBSale, DBGeneralExpense, DBOtherIncome, DBBank, DBInventoryLedgerEntry, DBVoucher } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances } from '../db/transactions';
 import { Printer, Calendar, Search, FileSpreadsheet, Percent, Columns, X } from 'lucide-react';
 

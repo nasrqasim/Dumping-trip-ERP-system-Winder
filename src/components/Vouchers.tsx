@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getAllRecords, putRecord, deleteRecord, DBGeneralExpense, DBOtherIncome, DBVoucher, DBBank, DBCustomer, DBVendor } from '../db/indexedDB';
+import { getAllRecords, putRecord, deleteRecord, DBGeneralExpense, DBOtherIncome, DBVoucher, DBBank, DBCustomer, DBVendor } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances, saveGeneralExpenseTransaction, deleteGeneralExpenseTransaction, saveOtherIncomeTransaction, deleteOtherIncomeTransaction, saveVoucherTransaction, deleteVoucherTransaction } from '../db/transactions';
 import { Plus, Trash, Edit, DollarSign, ArrowUpRight, ArrowDownRight, BookOpen, Printer, Search, X } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';

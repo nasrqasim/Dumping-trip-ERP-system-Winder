@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getAllRecords, putRecord, deleteRecord, DBVehicle, DBTrip, DBCustomer, DBItem } from '../db/indexedDB';
+import { getAllRecords, putRecord, deleteRecord, DBVehicle, DBTrip, DBCustomer, DBItem } from '../db/firestore';
 import { Truck, Plus, Edit, Trash, Printer, BookOpen, Search, X, ArrowLeft, FileText, Calendar, DollarSign, ArrowRight } from 'lucide-react';
 
 export default function Vehicles() {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { getAllRecords, putRecord, deleteRecord, DBStaff, DBStaffPayment, DBBank, DBVoucher } from '../db/indexedDB';
+import { getAllRecords, putRecord, deleteRecord, DBStaff, DBStaffPayment, DBBank, DBVoucher } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances, saveStaffPaymentTransaction, deleteStaffPaymentTransaction, migrateLegacyStaffAndPayments } from '../db/transactions';
 import { 
   Users, 

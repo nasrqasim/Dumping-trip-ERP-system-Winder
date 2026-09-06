@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { calculateLiveBalances, LiveBalances } from '../db/transactions';
-import { getAllRecords, DBTrip, DBSale, DBPurchase, DBGeneralExpense, DBOtherIncome, DBItem, DBCustomer, DBVendor, DBVoucher, DBLedgerEntry } from '../db/indexedDB';
+import { getAllRecords, DBTrip, DBSale, DBPurchase, DBGeneralExpense, DBOtherIncome, DBItem, DBCustomer, DBVendor, DBVoucher, DBLedgerEntry } from '../db/firestore';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
 import { Wallet, Landmark, ArrowUpRight, ArrowDownRight, Truck, TrendingUp, AlertTriangle, PackageOpen, Printer } from 'lucide-react';
 

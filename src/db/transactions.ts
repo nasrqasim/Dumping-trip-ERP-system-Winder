@@ -19,7 +19,7 @@ import {
   DBStaffPayment,
   DBVoucher,
   DBTripItem
-} from './indexedDB';
+} from './firestore';
 
 // ==========================================
 // LIVE BALANCE CALCULATIONS

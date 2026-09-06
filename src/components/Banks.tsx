@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getAllRecords, putRecord, deleteRecord, DBBank, DBLedgerEntry, DBCustomer, DBVendor, DBStaff } from '../db/indexedDB';
+import { getAllRecords, putRecord, deleteRecord, DBBank, DBLedgerEntry, DBCustomer, DBVendor, DBStaff } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances } from '../db/transactions';
 import { Landmark, Plus, Edit, Trash, History, Printer, Search, X } from 'lucide-react';
 

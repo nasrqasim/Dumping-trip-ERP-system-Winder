@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getAllRecords, putRecord, deleteRecord, DBPurchase, DBVendor, DBItem, DBBank, DBVehicle, DBPurchaseItem } from '../db/indexedDB';
+import { getAllRecords, putRecord, deleteRecord, DBPurchase, DBVendor, DBItem, DBBank, DBVehicle, DBPurchaseItem } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances, savePurchaseTransaction, deletePurchaseTransaction } from '../db/transactions';
 import { Plus, Trash, Edit, Truck, Calendar, ShoppingBag, Printer, Search, X, UserCheck, AlertTriangle, ShieldAlert, Wallet, FileText, Download, Check } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';

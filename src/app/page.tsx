@@ -14,7 +14,7 @@ import Vouchers from '../components/Vouchers';
 import StaffManagement from '../components/StaffManagement';
 import Banks from '../components/Banks';
 import Reports from '../components/Reports';
-import { migrateItemIds } from '../db/indexedDB';
+import { migrateItemIds } from '../db/firestore';
 
 export default function RootPage() {
   const [activeTab, setActiveTab] = useState('dashboard');
