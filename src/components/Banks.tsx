@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { getAllRecords, putRecord, deleteRecord, DBBank, DBLedgerEntry, DBCustomer, DBVendor, DBStaff } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances } from '../db/transactions';
 import { Landmark, Plus, Edit, Trash, History, Printer, Search, X } from 'lucide-react';
+import Pagination from './Pagination';
 
 export default function Banks() {
   const [banks, setBanks] = useState<DBBank[]>([]);
@@ -13,6 +14,8 @@ export default function Banks() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [historyCurrentPage, setHistoryCurrentPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState(25);
 
   // Form modals
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -183,6 +186,11 @@ export default function Banks() {
     );
   });
 
+  const paginatedHistoryRows = filteredHistoryRows.slice(
+    (historyCurrentPage - 1) * historyPageSize,
+    historyCurrentPage * historyPageSize
+  );
+
   return (
     <div className="space-y-6">
       {/* Listing View */}
@@ -268,7 +276,7 @@ export default function Banks() {
                   </div>
 
                   <button
-                    onClick={() => setViewHistoryBank(bank)}
+                    onClick={() => { setViewHistoryBank(bank); setHistoryCurrentPage(1); }}
                     className="w-full bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-semibold py-2 rounded transition flex items-center justify-center space-x-1.5"
                   >
                     <History className="h-3.5 w-3.5" />
@@ -290,9 +298,16 @@ export default function Banks() {
           {/* Printable Bank Accounts Directory Table */}
           <div className="hidden print:block print-a4 print-container space-y-4">
             <div className="text-center pb-4 border-b-2 border-slate-300">
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-              <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
-                BANK ACCOUNTS & LIVE BALANCES DIRECTORY
+              <div className="flex items-center justify-center space-x-3 mb-2">
+                <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+                <div>
+                  <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h2>
+                  <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+                  <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+                </div>
+              </div>
+              <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">
+                BANK ACCOUNTS &amp; LIVE BALANCES DIRECTORY
               </p>
               <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
                 <div>Total Bank Accounts: {banks.length}</div>
@@ -347,7 +362,7 @@ export default function Banks() {
             </div>
 
             <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-              Software by Roonjha Developer - 03152914836
+              Software by Roonjha Developers - 03152914836
             </div>
           </div>
         </div>
@@ -401,8 +416,15 @@ export default function Banks() {
 
           <div className="print-a4 print-container space-y-4">
             <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-              <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">BANK STATEMENT & AUDIT JOURNAL - {viewHistoryBank.name}</p>
+              <div className="flex items-center justify-center space-x-3 mb-2">
+                <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+                <div>
+                  <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h2>
+                  <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+                  <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+                </div>
+              </div>
+              <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">BANK STATEMENT &amp; AUDIT JOURNAL - {viewHistoryBank.name}</p>
               <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
                 <div>Account No: {viewHistoryBank.accountNumber || 'N/A'}</div>
                 <div>Generated: {new Date().toLocaleDateString('en-GB')}</div>
@@ -444,7 +466,7 @@ export default function Banks() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredHistoryRows.map((row, idx) => (
+                {paginatedHistoryRows.map((row, idx) => (
                   <tr key={idx} className="hover:bg-slate-50/50">
                     <td className="px-4 py-3 text-slate-600">{row.date}</td>
                     <td className="px-4 py-3 font-semibold text-blue-700 text-xs">{row.type}</td>
@@ -485,10 +507,18 @@ export default function Banks() {
                 </tfoot>
               )}
             </table>
+
+            <Pagination
+              currentPage={historyCurrentPage}
+              totalItems={filteredHistoryRows.length}
+              pageSize={historyPageSize}
+              onPageChange={setHistoryCurrentPage}
+              onPageSizeChange={setHistoryPageSize}
+            />
             
             {/* Centered Footer */}
-            <div className="print-footer text-center">
-              Software by Roonjha Developer - 03152914836
+            <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
+              Software by Roonjha Developers - 03152914836
             </div>
           </div>
         </div>

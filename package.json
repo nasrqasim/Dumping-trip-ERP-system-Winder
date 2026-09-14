@@ -1,15 +1,14 @@
 {
-  "name": "norani-kanta-trip-management-system",
+  "name": "dumping-management-system-winder",
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "node --max-old-space-size=4096 ./node_modules/next/dist/bin/next dev",
-    "build": "node --max-old-space-size=4096 ./node_modules/next/dist/bin/next build",
-    "start": "node --max-old-space-size=4096 ./node_modules/next/dist/bin/next start",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
-    "@next/swc-win32-x64-msvc": "^14.2.5",
     "canvas-confetti": "^1.6.0",
     "firebase": "^12.18.0",
     "lucide-react": "^0.428.0",

@@ -24,39 +24,49 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   useEffect(() => {
     async function loadData() {
       try {
-        const bal = await calculateLiveBalances();
-        setBalances(bal);
+        const [
+          allTrips,
+          allSales,
+          allPurchases,
+          allGeneralExpenses,
+          allOtherIncomes,
+          allLedgers,
+          allItems,
+          allCustomers,
+          allVendors
+        ] = await Promise.all([
+          getAllRecords<DBTrip>('trips'),
+          getAllRecords<DBSale>('sales'),
+          getAllRecords<DBPurchase>('purchases'),
+          getAllRecords<DBGeneralExpense>('general_expenses'),
+          getAllRecords<DBOtherIncome>('other_incomes'),
+          getAllRecords<DBLedgerEntry>('ledgers'),
+          getAllRecords<DBItem>('items'),
+          getAllRecords<DBCustomer>('customers'),
+          getAllRecords<DBVendor>('vendors'),
+        ]);
 
-        const allTrips = await getAllRecords<DBTrip>('trips');
         setTrips(allTrips);
-
-        const allSales = await getAllRecords<DBSale>('sales');
         setSales(allSales);
-
-        const allPurchases = await getAllRecords<DBPurchase>('purchases');
         setPurchases(allPurchases);
-
-        const allGeneralExpenses = await getAllRecords<DBGeneralExpense>('general_expenses');
         setGeneralExpenses(allGeneralExpenses);
-
-        const allOtherIncomes = await getAllRecords<DBOtherIncome>('other_incomes');
         setOtherIncomes(allOtherIncomes);
-
-        const allLedgers = await getAllRecords<DBLedgerEntry>('ledgers');
         setLedgers(allLedgers);
-
-        const allItems = await getAllRecords<DBItem>('items');
         setItems(allItems);
-
-        const allCustomers = await getAllRecords<DBCustomer>('customers');
         setCustomers(allCustomers);
-
-        const allVendors = await getAllRecords<DBVendor>('vendors');
         setVendors(allVendors);
 
-        setLoading(false);
+        const bal = await calculateLiveBalances({
+          ledgers: allLedgers,
+          customers: allCustomers,
+          vendors: allVendors,
+          items: allItems,
+        });
+        setBalances(bal);
       } catch (err) {
         console.error('Error loading dashboard data:', err);
+      } finally {
+        setLoading(false);
       }
     }
     loadData();
@@ -250,21 +260,23 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Top Header with Print Summary Button */}
-      <div className="flex justify-between items-center no-print">
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">Executive Dashboard & Analytics</h2>
-          <p className="text-sm text-slate-500">Live operational overview, financial statistics, and inventory health</p>
+    <div>
+      {/* On-Screen Interactive Dashboard (Hidden during printing) */}
+      <div className="space-y-6 no-print">
+        {/* Top Header with Print Summary Button */}
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">Executive Dashboard &amp; Analytics</h2>
+            <p className="text-sm text-slate-500">Live operational overview, financial statistics, and inventory health</p>
+          </div>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center space-x-2 bg-slate-800 text-white hover:bg-slate-900 px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm"
+          >
+            <Printer className="h-4 w-4" />
+            <span>Print Summary</span>
+          </button>
         </div>
-        <button
-          onClick={() => window.print()}
-          className="flex items-center space-x-2 bg-slate-800 text-white hover:bg-slate-900 px-4 py-2 rounded-lg text-sm font-medium transition"
-        >
-          <Printer className="h-4 w-4" />
-          <span>Print Summary</span>
-        </button>
-      </div>
 
       {/* Financial Summary Cards */}
       <div>
@@ -476,19 +488,22 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           </div>
         </div>
       </div>
+      </div>
 
       {/* Printable Dashboard Summary Document (Print-Only matching Image 1) */}
-      <div className="hidden print:block print-a4 print-container space-y-4">
+      <div className="print-only print-a4 print-container space-y-4">
         <div className="text-center pb-3">
-          <h1 className="text-2xl font-black tracking-wide text-[#800000] uppercase font-serif">
-            AL MADINA BUILDING MATERIAL UTHAL
-          </h1>
+          <div className="flex items-center justify-center space-x-3 mb-2">
+            <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+            <div>
+              <h1 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h1>
+              <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+              <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+            </div>
+          </div>
           <h2 className="text-sm font-extrabold tracking-wider text-[#800000] uppercase mt-0.5 font-serif">
-            EXECUTIVE DASHBOARD & CASH / BANK / BALANCES SUMMARY
+            EXECUTIVE DASHBOARD &amp; CASH / BANK / BALANCES SUMMARY
           </h2>
-          <p className="text-[11px] text-slate-600 font-medium mt-1">
-            Phone: 03351279963 <span className="mx-1 text-slate-400">|</span> Address: Main Bazaar, Uthal, District Lasbela, Balochistan
-          </p>
           <div className="flex justify-center items-center text-[11px] font-semibold text-slate-600 space-x-3 mt-0.5">
             <span>Printed Date: {new Date().toLocaleDateString('en-GB')} {new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
             <span className="text-slate-400">|</span>
@@ -589,7 +604,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         </table>
 
         <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-          Software by Roonjha Developer - 03152914836
+          Software by Roonjha Developers - 03152914836
         </div>
       </div>
     </div>

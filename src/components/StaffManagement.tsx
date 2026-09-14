@@ -1,6 +1,27 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { getAllRecords, putRecord, deleteRecord, DBStaff, DBStaffPayment, DBBank, DBVoucher } from '../db/firestore';
-import { calculateLiveBalances, LiveBalances, saveStaffPaymentTransaction, deleteStaffPaymentTransaction, migrateLegacyStaffAndPayments } from '../db/transactions';
+import { 
+  getAllRecords, 
+  putRecord, 
+  deleteRecord, 
+  DBStaff, 
+  DBStaffPayment, 
+  DBBank, 
+  DBVehicle,
+  DBTrip,
+  DBDriverAdvance,
+  DBDriverExpenseSubmission,
+  DBStaffCategory
+} from '../db/firestore';
+import { 
+  calculateLiveBalances, 
+  LiveBalances, 
+  saveStaffPaymentTransaction, 
+  deleteStaffPaymentTransaction, 
+  migrateLegacyStaffAndPayments,
+  saveDriverAdvanceTransaction,
+  deleteDriverAdvanceTransaction,
+  saveDriverExpenseSettlementTransaction
+} from '../db/transactions';
 import { 
   Users, 
   Plus, 
@@ -19,13 +40,26 @@ import {
   ArrowUpRight, 
   ArrowDownLeft,
   ChevronRight,
-  UserCheck
+  UserCheck,
+  Truck,
+  Shield,
+  CreditCard,
+  Image as ImageIcon,
+  CheckCircle,
+  Clock,
+  Upload,
+  Camera,
+  Eye,
+  Download
 } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
+import Pagination from './Pagination';
 
 export default function StaffManagement() {
-  const [activeSubTab, setActiveSubTab] = useState<'roster' | 'payments' | 'ledger'>('roster');
+  const [activeSubTab, setActiveSubTab] = useState<'roster' | 'payments' | 'driver_advances' | 'ledger'>('roster');
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   
   // Ledger Specific States
   const [activeLedgerStaffId, setActiveLedgerStaffId] = useState<string>('all');
@@ -37,6 +71,10 @@ export default function StaffManagement() {
   // Data States
   const [staff, setStaff] = useState<DBStaff[]>([]);
   const [payments, setPayments] = useState<DBStaffPayment[]>([]);
+  const [driverAdvances, setDriverAdvances] = useState<DBDriverAdvance[]>([]);
+  const [driverExpenses, setDriverExpenses] = useState<DBDriverExpenseSubmission[]>([]);
+  const [vehicles, setVehicles] = useState<DBVehicle[]>([]);
+  const [trips, setTrips] = useState<DBTrip[]>([]);
   const [banks, setBanks] = useState<DBBank[]>([]);
   const [balances, setBalances] = useState<LiveBalances | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +82,10 @@ export default function StaffManagement() {
   // Form States
   const [isStaffFormOpen, setIsStaffFormOpen] = useState(false);
   const [isPaymentFormOpen, setIsPaymentFormOpen] = useState(false);
+  const [isDriverAdvFormOpen, setIsDriverAdvFormOpen] = useState(false);
+  const [isDriverExpenseFormOpen, setIsDriverExpenseFormOpen] = useState(false);
+  const [viewCnicModal, setViewCnicModal] = useState<{ staffName: string; cnic: string; url: string } | null>(null);
+
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
   const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
 
@@ -51,44 +93,107 @@ export default function StaffManagement() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [designation, setDesignation] = useState('');
+  const [category, setCategory] = useState('Driver');
+  const [cnic, setCnic] = useState('');
+  const [cnicDocUrl, setCnicDocUrl] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [licenseNo, setLicenseNo] = useState('');
+  const [licenseExpiry, setLicenseExpiry] = useState('');
+  const [salaryType, setSalaryType] = useState<'Monthly' | 'Daily' | 'Trip-based' | 'Commission'>('Monthly');
   const [basicSalary, setBasicSalary] = useState(0);
+  const [address, setAddress] = useState('');
+  const [emergencyContact, setEmergencyContact] = useState('');
 
   // Payment Form fields
   const [payStaffId, setPayStaffId] = useState('');
   const [payType, setPayType] = useState<'salary' | 'advance' | 'loan' | 'settlement'>('salary');
-  const [payAmount, setPayAmount] = useState(0); // For salary, this is gross salary
+  const [payAmount, setPayAmount] = useState(0); // Gross salary or Advance amount
   const [payAdvanceAdjusted, setPayAdvanceAdjusted] = useState(0);
   const [payMethod, setPayMethod] = useState<'Cash' | 'Bank'>('Cash');
   const [payBankId, setPayBankId] = useState('');
   const [payDate, setPayDate] = useState(new Date().toISOString().split('T')[0]);
   const [payDesc, setPayDesc] = useState('');
 
+  // Driver Advance Form fields
+  const [advDriverId, setAdvDriverId] = useState('');
+  const [advVehicleId, setAdvVehicleId] = useState('');
+  const [advTripId, setAdvTripId] = useState('');
+  const [advAmount, setAdvAmount] = useState<number>(0);
+  const [advPaymentType, setAdvPaymentType] = useState<'Cash' | 'Bank'>('Cash');
+  const [advBankId, setAdvBankId] = useState('');
+  const [advPurpose, setAdvPurpose] = useState('Route Fuel & Trip Expenses');
+  const [advDate, setAdvDate] = useState(new Date().toISOString().split('T')[0]);
+
+  // Driver Expense Settlement Form fields
+  const [expDriverId, setExpDriverId] = useState('');
+  const [expVehicleId, setExpVehicleId] = useState('');
+  const [expTripId, setExpTripId] = useState('');
+  const [expCategory, setExpCategory] = useState('Diesel');
+  const [expDesc, setExpDesc] = useState('');
+  const [expClaimed, setExpClaimed] = useState<number>(0);
+  const [expApproved, setExpApproved] = useState<number>(0);
+  const [expCashReturned, setExpCashReturned] = useState<number>(0);
+  const [expDate, setExpDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const defaultCategories = [
+    'Driver',
+    'Munshi / Clerk',
+    'Accountant',
+    'Mechanic / Mistri',
+    'Dohbi / Loader',
+    'Helper / Labour',
+    'Chowkidar / Security',
+    'Site Supervisor',
+    'Management / Admin'
+  ];
+
   const loadData = async () => {
     try {
       await migrateLegacyStaffAndPayments();
 
-      const allStaff = await getAllRecords<DBStaff>('staff');
+      const [
+        allStaff, 
+        allPayments, 
+        allAdvances, 
+        allExpenses, 
+        allVehicles, 
+        allTrips, 
+        allBanks
+      ] = await Promise.all([
+        getAllRecords<DBStaff>('staff'),
+        getAllRecords<DBStaffPayment>('staff_payments'),
+        getAllRecords<DBDriverAdvance>('driver_advances'),
+        getAllRecords<DBDriverExpenseSubmission>('driver_expenses'),
+        getAllRecords<DBVehicle>('vehicles'),
+        getAllRecords<DBTrip>('trips'),
+        getAllRecords<DBBank>('banks')
+      ]);
+
       setStaff(allStaff);
       if (allStaff.length > 0 && !payStaffId) {
         setPayStaffId(allStaff[0].id);
       }
 
-      const allPayments = await getAllRecords<DBStaffPayment>('staff_payments');
       allPayments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setPayments(allPayments);
 
-      const allBanks = await getAllRecords<DBBank>('banks');
+      allAdvances.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setDriverAdvances(allAdvances);
+
+      allExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setDriverExpenses(allExpenses);
+
+      setVehicles(allVehicles);
+      setTrips(allTrips);
       setBanks(allBanks);
-      if (allBanks.length > 0 && !payBankId) {
-        setPayBankId(allBanks[0].id);
-      }
+      if (allBanks.length > 0 && !payBankId) setPayBankId(allBanks[0].id);
 
       const liveBal = await calculateLiveBalances();
       setBalances(liveBal);
 
       setLoading(false);
     } catch (err) {
-      console.error(err);
+      console.error('Error loading staff data:', err);
     }
   };
 
@@ -108,19 +213,90 @@ export default function StaffManagement() {
     }
   }, [payAmount, payAdvanceAdjusted, payType]);
 
+  const handleImageUpload = (file: File) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Please select an image file (JPG, PNG, WebP, etc.)');
+      return;
+    }
+    setIsUploadingImage(true);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new window.Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const maxDim = 1200;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            setCnicDocUrl(dataUrl);
+          } else {
+            setCnicDocUrl(e.target?.result as string);
+          }
+        } catch (err) {
+          console.error('Error compressing image:', err);
+          setCnicDocUrl(e.target?.result as string);
+        } finally {
+          setIsUploadingImage(false);
+        }
+      };
+      img.onerror = () => {
+        setIsUploadingImage(false);
+        alert('Could not process image file. Please try another image.');
+      };
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => {
+      setIsUploadingImage(false);
+      alert('Failed to read image file.');
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleOpenStaffForm = (st?: DBStaff) => {
     if (st) {
       setEditingStaffId(st.id);
       setName(st.name);
-      setPhone(st.phone);
-      setDesignation(st.designation);
-      setBasicSalary(st.basicSalary);
+      setPhone(st.phone || '');
+      setDesignation(st.designation || '');
+      setCategory(st.category || 'Driver');
+      setCnic(st.cnic || '');
+      setCnicDocUrl(st.cnicDocUrl || '');
+      setLicenseNo(st.licenseNo || '');
+      setLicenseExpiry(st.licenseExpiry || '');
+      setSalaryType(st.salaryType || 'Monthly');
+      setBasicSalary(st.basicSalary || 0);
+      setAddress(st.address || '');
+      setEmergencyContact(st.emergencyContact || '');
     } else {
       setEditingStaffId(null);
       setName('');
       setPhone('');
       setDesignation('');
+      setCategory('Driver');
+      setCnic('');
+      setCnicDocUrl('');
+      setLicenseNo('');
+      setLicenseExpiry('');
+      setSalaryType('Monthly');
       setBasicSalary(0);
+      setAddress('');
+      setEmergencyContact('');
     }
     setIsStaffFormOpen(true);
   };
@@ -143,16 +319,23 @@ export default function StaffManagement() {
           }
         }
       }
-      const nextNum = maxNum + 1;
-      stId = `staf-${String(nextNum).padStart(3, '0')}`;
+      stId = `staf-${String(maxNum + 1).padStart(3, '0')}`;
     }
 
     const savedStaff: DBStaff = {
       id: stId,
-      name,
-      phone,
-      designation,
-      basicSalary: Number(basicSalary),
+      name: name.trim(),
+      phone: phone.trim(),
+      designation: designation.trim() || category,
+      category,
+      cnic: cnic.trim() || undefined,
+      cnicDocUrl: cnicDocUrl.trim() || undefined,
+      licenseNo: licenseNo.trim() || undefined,
+      licenseExpiry: licenseExpiry || undefined,
+      salaryType,
+      basicSalary: Number(basicSalary) || 0,
+      address: address.trim() || undefined,
+      emergencyContact: emergencyContact.trim() || undefined
     };
 
     await putRecord<DBStaff>('staff', savedStaff);
@@ -194,17 +377,167 @@ export default function StaffManagement() {
     setIsPaymentFormOpen(true);
   };
 
-  const handleQuickPay = (st: DBStaff) => {
-    setEditingPaymentId(null);
-    setPayStaffId(st.id);
-    setPayType('salary');
-    setPayAmount(st.basicSalary);
-    setPayAdvanceAdjusted(0);
-    setPayMethod('Cash');
-    setPayDate(new Date().toISOString().split('T')[0]);
-    setPayDesc(`Salary for ${new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}`);
-    if (banks.length > 0 && !payBankId) setPayBankId(banks[0].id);
-    setIsPaymentFormOpen(true);
+  const handleSavePayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payStaffId) {
+      alert('Please select an employee.');
+      return;
+    }
+    if (payAmount <= 0) {
+      alert('Amount must be greater than 0.');
+      return;
+    }
+
+    let payId = editingPaymentId;
+    if (!payId) {
+      let maxNum = 0;
+      for (const p of payments) {
+        if (p.id && p.id.startsWith('pay-')) {
+          const numPart = parseInt(p.id.replace('pay-', ''), 10);
+          if (!isNaN(numPart) && numPart > maxNum) {
+            maxNum = numPart;
+          }
+        }
+      }
+      payId = `pay-${String(maxNum + 1).padStart(3, '0')}`;
+    }
+
+    const netPayout = (payType === 'salary' || payType === 'settlement')
+      ? Math.max(0, payAmount - payAdvanceAdjusted)
+      : payAmount;
+
+    const payment: DBStaffPayment = {
+      id: payId,
+      date: payDate,
+      staffId: payStaffId,
+      type: payType,
+      amount: Number(payAmount),
+      advanceAdjusted: (payType === 'salary' || payType === 'settlement') ? Number(payAdvanceAdjusted) : 0,
+      netPaid: Number(netPayout),
+      paymentType: payMethod,
+      bankId: payMethod === 'Bank' ? payBankId : undefined,
+      description: payDesc.trim() || `${payType.toUpperCase()} payout for ${payStaffId}`
+    };
+
+    try {
+      await saveStaffPaymentTransaction(payment);
+      setIsPaymentFormOpen(false);
+      loadData();
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to save staff payment: ' + (err?.message || err));
+    }
+  };
+
+  const handleDeletePayment = async (id: string) => {
+    if (confirm('Are you sure you want to delete this staff payment? All ledger entries will be reversed.')) {
+      await deleteStaffPaymentTransaction(id);
+      loadData();
+    }
+  };
+
+  // Driver Advance Handlers
+  const handleSaveDriverAdvance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!advDriverId) {
+      alert('Please select a driver.');
+      return;
+    }
+    if (advAmount <= 0) {
+      alert('Advance amount must be greater than 0.');
+      return;
+    }
+
+    const prefix = 'dadv-';
+    const existingIds = driverAdvances.map(a => a.id).filter(id => id.startsWith(prefix));
+    let maxNum = 0;
+    for (const id of existingIds) {
+      const n = parseInt(id.replace(prefix, ''), 10);
+      if (!isNaN(n) && n > maxNum) maxNum = n;
+    }
+    const advId = `${prefix}${String(maxNum + 1).padStart(3, '0')}`;
+    const driver = staff.find(s => s.id === advDriverId);
+
+    const adv: DBDriverAdvance = {
+      id: advId,
+      date: advDate,
+      driverId: advDriverId,
+      driverName: driver ? driver.name : advDriverId,
+      vehicleId: advVehicleId || undefined,
+      tripId: advTripId || undefined,
+      amount: Number(advAmount),
+      paymentType: advPaymentType,
+      bankId: advPaymentType === 'Bank' ? advBankId : undefined,
+      purpose: advPurpose.trim() || 'Trip Advance',
+      status: 'Approved'
+    };
+
+    try {
+      await saveDriverAdvanceTransaction(adv);
+      setIsDriverAdvFormOpen(false);
+      setAdvAmount(0);
+      loadData();
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to save driver advance: ' + (err?.message || err));
+    }
+  };
+
+  const handleDeleteDriverAdvance = async (id: string) => {
+    if (confirm('Are you sure you want to delete this driver advance?')) {
+      await deleteDriverAdvanceTransaction(id);
+      loadData();
+    }
+  };
+
+  // Driver Settlement Handlers
+  const handleSaveDriverExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!expDriverId) {
+      alert('Please select a driver.');
+      return;
+    }
+    if (expClaimed <= 0) {
+      alert('Claimed amount must be greater than 0.');
+      return;
+    }
+
+    const prefix = 'dexp-';
+    const existingIds = driverExpenses.map(a => a.id).filter(id => id.startsWith(prefix));
+    let maxNum = 0;
+    for (const id of existingIds) {
+      const n = parseInt(id.replace(prefix, ''), 10);
+      if (!isNaN(n) && n > maxNum) maxNum = n;
+    }
+    const expId = `${prefix}${String(maxNum + 1).padStart(3, '0')}`;
+    const driver = staff.find(s => s.id === expDriverId);
+
+    const sub: DBDriverExpenseSubmission = {
+      id: expId,
+      date: expDate,
+      driverId: expDriverId,
+      driverName: driver ? driver.name : expDriverId,
+      vehicleId: expVehicleId || undefined,
+      tripId: expTripId || undefined,
+      category: expCategory,
+      description: expDesc.trim() || expCategory,
+      amountClaimed: Number(expClaimed),
+      amountApproved: Number(expApproved || expClaimed),
+      amountRejected: Math.max(0, Number(expClaimed) - Number(expApproved || expClaimed)),
+      status: 'Settled'
+    };
+
+    try {
+      await saveDriverExpenseSettlementTransaction(sub, expCashReturned > 0 ? Number(expCashReturned) : undefined);
+      setIsDriverExpenseFormOpen(false);
+      setExpClaimed(0);
+      setExpApproved(0);
+      setExpCashReturned(0);
+      loadData();
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to save expense settlement: ' + (err?.message || err));
+    }
   };
 
   const handleOpenLedger = (st: DBStaff) => {
@@ -212,88 +545,16 @@ export default function StaffManagement() {
     setActiveSubTab('ledger');
   };
 
-  const handleSavePayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!payStaffId || payAmount <= 0) {
-      alert('Please select an employee and specify a valid amount.');
-      return;
-    }
-
-    const netPaid = payType === 'salary' || payType === 'settlement' 
-      ? payAmount - payAdvanceAdjusted 
-      : payAmount;
-
-    let payId = editingPaymentId;
-    if (!payId) {
-      let maxNum = 0;
-      const prefix = 'pay-';
-      for (const p of payments) {
-        if (p.id && p.id.startsWith(prefix)) {
-          const numPart = parseInt(p.id.replace(prefix, ''), 10);
-          if (!isNaN(numPart) && numPart > maxNum) {
-            maxNum = numPart;
-          }
-        }
-      }
-      const allVch = await getAllRecords<DBVoucher>('vouchers');
-      for (const v of allVch) {
-        if (v.id && v.id.startsWith(prefix)) {
-          const numPart = parseInt(v.id.replace(prefix, ''), 10);
-          if (!isNaN(numPart) && numPart > maxNum) {
-            maxNum = numPart;
-          }
-        }
-      }
-      const nextNum = maxNum + 1;
-      payId = `${prefix}${String(nextNum).padStart(3, '0')}`;
-    }
-
-    const payment: DBStaffPayment = {
-      id: payId,
-      date: payDate,
-      staffId: payStaffId,
-      type: payType,
-      amount: Number(payAmount), // gross
-      advanceAdjusted: Number(payAdvanceAdjusted),
-      netPaid: Number(netPaid),
-      paymentType: payMethod,
-      bankId: payMethod === 'Bank' ? payBankId : undefined,
-      description: payDesc,
-    };
-
-    await saveStaffPaymentTransaction(payment);
-    setIsPaymentFormOpen(false);
-    loadData();
-  };
-
-  const handleDeletePayment = async (id: string) => {
-    if (confirm('Are you sure you want to delete this payment log? This reverses all financial ledger changes.')) {
-      await deleteStaffPaymentTransaction(id);
-      loadData();
-    }
-  };
-
-  // Prepopulate salary on selector change
-  const handleStaffSelect = (id: string) => {
-    setPayStaffId(id);
-    const selected = staff.find(s => s.id === id);
-    if (selected && payType === 'salary') {
-      setPayAmount(selected.basicSalary);
-    }
-  };
-
-  const netPaidPreview = payType === 'salary' || payType === 'settlement' 
-    ? payAmount - payAdvanceAdjusted 
-    : payAmount;
-
+  // Filters
   const cleanSearch = searchQuery.toLowerCase().trim();
-  
   const filteredStaff = staff.filter(s => {
     if (!cleanSearch) return true;
     return (
       s.name.toLowerCase().includes(cleanSearch) ||
-      s.phone.includes(cleanSearch) ||
-      s.designation.toLowerCase().includes(cleanSearch) ||
+      (s.phone && s.phone.includes(cleanSearch)) ||
+      (s.designation && s.designation.toLowerCase().includes(cleanSearch)) ||
+      (s.category && s.category.toLowerCase().includes(cleanSearch)) ||
+      (s.cnic && s.cnic.includes(cleanSearch)) ||
       s.id.toLowerCase().includes(cleanSearch)
     );
   });
@@ -311,127 +572,17 @@ export default function StaffManagement() {
     );
   });
 
-  // Month list constants and helpers
-  const ALL_MONTHS = useMemo(() => [
-    { value: 'all', name: '📅 All 12 Months' },
-    { value: '01', name: 'January' },
-    { value: '02', name: 'February' },
-    { value: '03', name: 'March' },
-    { value: '04', name: 'April' },
-    { value: '05', name: 'May' },
-    { value: '06', name: 'June' },
-    { value: '07', name: 'July' },
-    { value: '08', name: 'August' },
-    { value: '09', name: 'September' },
-    { value: '10', name: 'October' },
-    { value: '11', name: 'November' },
-    { value: '12', name: 'December' },
-  ], []);
+  const paginatedStaff = filteredStaff.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const paginatedPayments = filteredPayments.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  const availableYears = useMemo(() => {
-    const currentYear = new Date().getFullYear();
-    const yearSet = new Set<string>([String(currentYear), String(currentYear - 1), String(currentYear + 1)]);
-    payments.forEach(p => {
-      if (p.date && p.date.length >= 4) {
-        const y = p.date.substring(0, 4);
-        yearSet.add(y);
-      }
-    });
-    return Array.from(yearSet).sort().reverse();
-  }, [payments]);
-
-  const formatMonthName = (mStr: string) => {
-    if (!mStr || mStr === 'all') return 'All Months';
-    try {
-      const [year, month] = mStr.split('-').map(Number);
-      if (!year || !month) return mStr;
-      const d = new Date(year, month - 1, 1);
-      return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    } catch {
-      return mStr;
-    }
-  };
-
-  const getFilterPeriodLabel = () => {
-    if (selectedMonth === 'all' && selectedYear === 'all') {
-      return 'All Months & Years';
-    }
-    if (selectedMonth === 'all' && selectedYear !== 'all') {
-      return `Full Year ${selectedYear}`;
-    }
-    const mObj = ALL_MONTHS.find(m => m.value === selectedMonth);
-    const mName = mObj ? mObj.name : selectedMonth;
-    if (selectedYear !== 'all') {
-      return `${mName} ${selectedYear}`;
-    }
-    return `${mName} (All Years)`;
-  };
-
-  const handleYearFilterChange = (yr: string) => {
-    setSelectedYear(yr);
-    if (yr === 'all') {
-      setLedgerStartDate('');
-      setLedgerEndDate('');
-    } else {
-      if (selectedMonth === 'all') {
-        setLedgerStartDate(`${yr}-01-01`);
-        setLedgerEndDate(`${yr}-12-31`);
-      } else {
-        const y = Number(yr);
-        const m = Number(selectedMonth);
-        const lastDay = new Date(y, m, 0).getDate();
-        setLedgerStartDate(`${yr}-${selectedMonth}-01`);
-        setLedgerEndDate(`${yr}-${selectedMonth}-${String(lastDay).padStart(2, '0')}`);
-      }
-    }
-  };
-
-  const handleMonthFilterChange = (mVal: string) => {
-    setSelectedMonth(mVal);
-    if (mVal === 'all') {
-      if (selectedYear === 'all') {
-        setLedgerStartDate('');
-        setLedgerEndDate('');
-      } else {
-        setLedgerStartDate(`${selectedYear}-01-01`);
-        setLedgerEndDate(`${selectedYear}-12-31`);
-      }
-    } else {
-      if (selectedYear !== 'all') {
-        const y = Number(selectedYear);
-        const m = Number(mVal);
-        const lastDay = new Date(y, m, 0).getDate();
-        setLedgerStartDate(`${selectedYear}-${mVal}-01`);
-        setLedgerEndDate(`${selectedYear}-${mVal}-${String(lastDay).padStart(2, '0')}`);
-      } else {
-        setLedgerStartDate('');
-        setLedgerEndDate('');
-      }
-    }
-  };
-
-  const matchesMonthAndYear = (dateStr: string) => {
-    if (!dateStr) return false;
-    if (selectedYear !== 'all' && !dateStr.startsWith(selectedYear)) {
-      return false;
-    }
-    if (selectedMonth !== 'all') {
-      const mPart = dateStr.substring(5, 7);
-      if (mPart !== selectedMonth) return false;
-    }
-    return true;
-  };
-
-  // Selected individual staff
+  // Selected ledger staff calculations
   const selectedLedgerStaff = useMemo(() => {
     if (activeLedgerStaffId === 'all') return null;
     return staff.find(s => s.id === activeLedgerStaffId) || null;
   }, [staff, activeLedgerStaffId]);
 
-  // Chronological enriched transactions for selected staff
   const staffEnrichedTransactions = useMemo(() => {
     if (!selectedLedgerStaff) return [];
-    // Get all transactions for this staff sorted ascending by date
     const list = payments.filter(p => p.staffId === selectedLedgerStaff.id);
     const sortedAsc = [...list].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
@@ -444,105 +595,13 @@ export default function StaffManagement() {
         ...p,
         advanceGiven,
         advanceDeducted,
-        runningBalance: runningBal,
+        runningBal
       };
     });
   }, [selectedLedgerStaff, payments]);
 
-  // Filtered detailed transactions based on UI controls
-  const filteredLedgerTransactions = useMemo(() => {
-    return staffEnrichedTransactions.filter(tx => {
-      if (!matchesMonthAndYear(tx.date)) return false;
-      if (ledgerStartDate && tx.date < ledgerStartDate) return false;
-      if (ledgerEndDate && tx.date > ledgerEndDate) return false;
-      if (cleanSearch) {
-        const match = 
-          tx.id.toLowerCase().includes(cleanSearch) ||
-          tx.date.includes(cleanSearch) ||
-          tx.type.toLowerCase().includes(cleanSearch) ||
-          tx.paymentType.toLowerCase().includes(cleanSearch) ||
-          (tx.description && tx.description.toLowerCase().includes(cleanSearch));
-        if (!match) return false;
-      }
-      return true;
-    });
-  }, [staffEnrichedTransactions, selectedYear, selectedMonth, ledgerStartDate, ledgerEndDate, cleanSearch]);
-
-  // Month-by-month summary statement for selected staff
-  const staffMonthSummaries = useMemo(() => {
-    if (!selectedLedgerStaff) return [];
-    
-    // Group all enriched transactions by month
-    const groupMap = new Map<string, typeof staffEnrichedTransactions>();
-    staffEnrichedTransactions.forEach(tx => {
-      const m = tx.date.substring(0, 7);
-      if (!groupMap.has(m)) groupMap.set(m, []);
-      groupMap.get(m)!.push(tx);
-    });
-
-    const months = Array.from(groupMap.keys()).sort().reverse();
-    return months.map(m => {
-      const txs = groupMap.get(m) || [];
-      const grossSalary = txs.filter(t => t.type === 'salary' || t.type === 'settlement').reduce((sum, t) => sum + t.amount, 0);
-      const advanceTaken = txs.reduce((sum, t) => sum + t.advanceGiven, 0);
-      const advanceDeducted = txs.reduce((sum, t) => sum + t.advanceDeducted, 0);
-      const netPaid = txs.reduce((sum, t) => sum + t.netPaid, 0);
-      const monthEndBalance = txs[txs.length - 1]?.runningBalance || 0;
-
-      let status = 'Active';
-      if (grossSalary > 0 && advanceDeducted > 0) {
-        status = 'Salary Paid (Adv Deducted)';
-      } else if (grossSalary > 0) {
-        status = 'Salary Paid';
-      } else if (advanceTaken > 0) {
-        status = 'Advance / Loan Taken';
-      }
-
-      return {
-        month: m,
-        monthName: formatMonthName(m),
-        grossSalary,
-        advanceTaken,
-        advanceDeducted,
-        netPaid,
-        monthEndBalance,
-        status,
-        txCount: txs.length
-      };
-    });
-  }, [selectedLedgerStaff, staffEnrichedTransactions]);
-
-  // All Staff Overview for selected month / date range
-  const allStaffMonthlyRegister = useMemo(() => {
-    return staff.map(st => {
-      const empPayments = payments.filter(p => {
-        if (p.staffId !== st.id) return false;
-        if (!matchesMonthAndYear(p.date)) return false;
-        if (ledgerStartDate && p.date < ledgerStartDate) return false;
-        if (ledgerEndDate && p.date > ledgerEndDate) return false;
-        return true;
-      });
-
-      const grossSalary = empPayments.filter(p => p.type === 'salary' || p.type === 'settlement').reduce((sum, p) => sum + p.amount, 0);
-      const advanceTaken = empPayments.filter(p => p.type === 'advance' || p.type === 'loan').reduce((sum, p) => sum + p.amount, 0);
-      const advanceDeducted = empPayments.reduce((sum, p) => sum + (p.advanceAdjusted || 0), 0);
-      const netPaid = empPayments.reduce((sum, p) => sum + p.netPaid, 0);
-      const currentBalance = balances?.staffBalances[st.id]?.advanceLoanBalance || 0;
-
-      return {
-        staff: st,
-        grossSalary,
-        advanceTaken,
-        advanceDeducted,
-        netPaid,
-        currentBalance,
-        txCount: empPayments.length,
-      };
-    });
-  }, [staff, payments, selectedYear, selectedMonth, ledgerStartDate, ledgerEndDate, balances]);
-
   if (loading) {
-    return <div className="text-center py-6 text-slate-500">Loading staff records...</div>;
+    return <div className="text-center py-10 font-bold text-slate-500">Loading staff & payroll records...</div>;
   }
 
   return (
@@ -550,7 +609,7 @@ export default function StaffManagement() {
       {/* Sub Navigation Tabs */}
       <div className="flex border-b border-slate-200 no-print">
         <button
-          onClick={() => { setActiveSubTab('roster'); }}
+          onClick={() => { setActiveSubTab('roster'); setCurrentPage(1); }}
           className={`px-5 py-2.5 text-sm font-semibold border-b-2 flex items-center space-x-2 transition ${
             activeSubTab === 'roster' 
               ? 'border-indigo-600 text-indigo-600 bg-indigo-50/30' 
@@ -558,10 +617,10 @@ export default function StaffManagement() {
           }`}
         >
           <Users className="h-4 w-4" />
-          <span>Staff Profiles & Roster</span>
+          <span>Staff Profiles &amp; Roster</span>
         </button>
         <button
-          onClick={() => { setActiveSubTab('payments'); }}
+          onClick={() => { setActiveSubTab('payments'); setCurrentPage(1); }}
           className={`px-5 py-2.5 text-sm font-semibold border-b-2 flex items-center space-x-2 transition ${
             activeSubTab === 'payments' 
               ? 'border-indigo-600 text-indigo-600 bg-indigo-50/30' 
@@ -569,10 +628,21 @@ export default function StaffManagement() {
           }`}
         >
           <DollarSign className="h-4 w-4" />
-          <span>Salaries, Advances & Loans</span>
+          <span>Salaries &amp; Vouchers</span>
         </button>
         <button
-          onClick={() => { setActiveSubTab('ledger'); }}
+          onClick={() => { setActiveSubTab('driver_advances'); setCurrentPage(1); }}
+          className={`px-5 py-2.5 text-sm font-semibold border-b-2 flex items-center space-x-2 transition ${
+            activeSubTab === 'driver_advances' 
+              ? 'border-indigo-600 text-indigo-600 bg-indigo-50/30' 
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Truck className="h-4 w-4" />
+          <span>Driver Advances &amp; Route Settlements</span>
+        </button>
+        <button
+          onClick={() => { setActiveSubTab('ledger'); setCurrentPage(1); }}
           className={`px-5 py-2.5 text-sm font-semibold border-b-2 flex items-center space-x-2 transition ${
             activeSubTab === 'ledger' 
               ? 'border-indigo-600 text-indigo-600 bg-indigo-50/30' 
@@ -580,1009 +650,690 @@ export default function StaffManagement() {
           }`}
         >
           <ClipboardList className="h-4 w-4" />
-          <span>Staff Ledger & Statements</span>
+          <span>Staff Ledger &amp; Statements</span>
         </button>
       </div>
 
-      {/* Top Header & Quick Action Bar */}
+      {/* Header and Action Controls */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
         <div>
           <h2 className="text-xl font-bold text-slate-800">
-            {activeSubTab === 'roster' && 'Staff Directory'}
-            {activeSubTab === 'payments' && 'Salary Payouts & Loans Register'}
-            {activeSubTab === 'ledger' && (selectedLedgerStaff ? `Staff Ledger: ${selectedLedgerStaff.name}` : 'Staff Payroll & Advance Statements')}
+            {activeSubTab === 'roster' && 'Staff Directory & Profiles'}
+            {activeSubTab === 'payments' && 'Salary Payouts & Payroll Register'}
+            {activeSubTab === 'driver_advances' && 'Driver Route Advances & Expense Settlements'}
+            {activeSubTab === 'ledger' && (selectedLedgerStaff ? `Staff Ledger: ${selectedLedgerStaff.name}` : 'Staff Payroll Statements')}
           </h2>
           <p className="text-sm text-slate-500">
-            {activeSubTab === 'roster' && 'Manage employee files, base salaries, and profiles'}
-            {activeSubTab === 'payments' && 'Disburse salaries, manage advances, and track outstanding staff loans'}
-            {activeSubTab === 'ledger' && (selectedLedgerStaff ? 'Complete month-by-month earnings, advances taken, deductions, and running balances' : 'Month-wise staff salaries, advances, deductions, and running balances')}
+            {activeSubTab === 'roster' && 'Manage employee files, CNIC documents, designations and basic salaries'}
+            {activeSubTab === 'payments' && 'Disburse monthly salaries, deduct advances and ensure exact calculations without duplication'}
+            {activeSubTab === 'driver_advances' && 'Issue trip advances, approve fuel/toll claims, record cash returns without double counting'}
+            {activeSubTab === 'ledger' && 'Month-by-month earnings, advances taken, adjustments and running balances'}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* Search Bar */}
           <div className="relative min-w-[220px]">
             <input
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search staff, salary records..."
-              className="w-full pl-8 pr-7 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-white"
+              placeholder="Search staff, CNIC, phone..."
+              className="w-full pl-8 pr-7 py-2 border border-slate-200 rounded-lg text-sm bg-white"
             />
             <Search className="h-4 w-4 text-slate-400 absolute left-2.5 top-3" />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="text-slate-400 hover:text-slate-600 absolute right-2.5 top-2.5 p-0.5 rounded"
-                title="Clear search"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
           </div>
 
           <button
             onClick={() => window.print()}
-            className="flex items-center space-x-2 bg-slate-800 text-white hover:bg-slate-900 px-3.5 py-2 rounded-lg text-sm font-medium transition shadow-sm"
+            className="flex items-center space-x-1.5 bg-slate-800 text-white px-3.5 py-2 rounded-lg text-sm font-semibold transition"
           >
             <Printer className="h-4 w-4" />
-            <span>Print Ledger</span>
+            <span>Print</span>
           </button>
 
-          {activeSubTab === 'roster' ? (
+          {activeSubTab === 'roster' && (
             <button
               onClick={() => handleOpenStaffForm()}
-              className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm"
+              className="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition shadow-sm"
             >
               <Plus className="h-4 w-4" />
-              <span>Add Staff Member</span>
+              <span>Add Staff Profile</span>
             </button>
-          ) : (
+          )}
+
+          {activeSubTab === 'payments' && (
             <button
               onClick={() => handleOpenPaymentForm()}
-              className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm"
+              className="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition shadow-sm"
             >
               <Plus className="h-4 w-4" />
               <span>Process Salary / Advance</span>
             </button>
           )}
+
+          {activeSubTab === 'driver_advances' && (
+            <div className="flex space-x-2">
+              <button
+                onClick={() => {
+                  setAdvAmount(0);
+                  setIsDriverAdvFormOpen(true);
+                }}
+                className="flex items-center space-x-1.5 bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition shadow-sm"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Issue Driver Advance</span>
+              </button>
+              <button
+                onClick={() => {
+                  setExpClaimed(0);
+                  setExpApproved(0);
+                  setExpCashReturned(0);
+                  setIsDriverExpenseFormOpen(true);
+                }}
+                className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-lg text-xs font-bold transition shadow-sm"
+              >
+                <CheckCircle className="h-4 w-4" />
+                <span>Settle Route Expenses</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ========================================================================= */}
-      {/* TAB 1: STAFF ROSTER & PROFILES */}
-      {/* ========================================================================= */}
+      {/* TAB 1: STAFF ROSTER */}
       {activeSubTab === 'roster' && (
-        <div className="print-a4 print-container space-y-4">
-          <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-            <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
-              EMPLOYEE & STAFF ROSTER DIRECTORY
-            </p>
-            <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
-              <div>Total Staff: {staff.length}</div>
-              <div>Generated: {new Date().toLocaleDateString('en-GB')}</div>
-            </div>
-          </div>
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-left">
+              <thead className="bg-slate-50 text-slate-600 uppercase text-xs font-bold">
+                <tr>
+                  <th className="px-5 py-3.5">Employee Name &amp; ID</th>
+                  <th className="px-5 py-3.5">Category / Role</th>
+                  <th className="px-5 py-3.5">Phone &amp; CNIC</th>
+                  <th className="px-5 py-3.5">Salary Type &amp; Base</th>
+                  <th className="px-5 py-3.5">Advance / Loan Balance</th>
+                  <th className="px-5 py-3.5 text-right no-print">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {paginatedStaff.map(st => {
+                  const loanBal = balances?.staffBalances[st.id]?.advanceLoanBalance || 0;
 
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-left">
-                <thead className="bg-slate-50 text-slate-600 uppercase text-xs font-bold tracking-wider">
-                  <tr>
-                    <th className="px-6 py-3.5">Employee Name</th>
-                    <th className="px-6 py-3.5">Phone</th>
-                    <th className="px-6 py-3.5">Designation</th>
-                    <th className="px-6 py-3.5">Base Salary</th>
-                    <th className="px-6 py-3.5">Outstanding Advance/Loan</th>
-                    <th className="px-6 py-3.5 text-right no-print">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {filteredStaff.map(st => {
-                    const loanBal = balances?.staffBalances[st.id]?.advanceLoanBalance || 0;
-
-                    return (
-                      <tr key={st.id} className="hover:bg-slate-50/75 transition">
-                        <td className="px-6 py-4">
-                          <div className="font-bold text-slate-800">{st.name}</div>
-                          <div className="text-[11px] font-mono text-slate-400">{st.id}</div>
-                        </td>
-                        <td className="px-6 py-4 text-slate-600">{st.phone || '—'}</td>
-                        <td className="px-6 py-4">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                            {st.designation || 'Staff'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 font-bold text-slate-700">
-                          Rs. {st.basicSalary.toLocaleString()} <span className="text-xs font-normal text-slate-400">/ mo</span>
-                        </td>
-                        <td className="px-6 py-4">
-                          {loanBal > 0 ? (
-                            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                              Rs. {loanBal.toLocaleString()}
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-50 text-slate-500">
-                              No Balance
-                            </span>
+                  return (
+                    <tr key={st.id} className="hover:bg-slate-50/75 transition">
+                      <td className="px-5 py-4">
+                        <div className="font-bold text-slate-800">{st.name}</div>
+                        <div className="text-[11px] font-mono text-slate-400">{st.id}</div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          {st.category || st.designation || 'Staff'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <p className="text-slate-700 font-medium">{st.phone || '—'}</p>
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500 font-mono mt-0.5">
+                          {st.cnic && <span>CNIC: {st.cnic}</span>}
+                          {st.cnicDocUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setViewCnicModal({ staffName: st.name, cnic: st.cnic || '', url: st.cnicDocUrl || '' })}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded border border-indigo-200 transition font-sans"
+                            >
+                              <ImageIcon className="h-3 w-3 text-indigo-600" />
+                              View Photo
+                            </button>
                           )}
-                        </td>
-                        <td className="px-6 py-4 text-right space-x-1.5 whitespace-nowrap no-print">
-                          <button
-                            onClick={() => handleOpenLedger(st)}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md text-xs font-semibold transition border border-indigo-200"
-                            title="Open employee month-wise ledger"
-                          >
-                            <ClipboardList className="h-3.5 w-3.5" />
-                            <span>Ledger</span>
-                          </button>
-                          <button
-                            onClick={() => handleQuickPay(st)}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-md text-xs font-semibold transition border border-emerald-200"
-                            title="Process salary or advance"
-                          >
-                            <DollarSign className="h-3.5 w-3.5" />
-                            <span>Pay</span>
-                          </button>
-                          <button 
-                            onClick={() => handleOpenStaffForm(st)} 
-                            className="p-1 text-slate-400 hover:text-indigo-600 transition" 
-                            title="Edit profile"
-                          >
-                            <Edit className="h-4 w-4 inline" />
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteStaff(st.id)} 
-                            className="p-1 text-slate-400 hover:text-rose-600 transition" 
-                            title="Delete staff"
-                          >
-                            <Trash className="h-4 w-4 inline" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filteredStaff.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="text-center py-12 text-slate-400">
-                        {searchQuery ? `No matching staff members found for "${searchQuery}".` : 'No staff members registered.'}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 font-bold text-slate-700">
+                        Rs. {st.basicSalary.toLocaleString()} 
+                        <span className="text-xs font-normal text-slate-400 block">{st.salaryType || 'Monthly'}</span>
+                      </td>
+                      <td className="px-5 py-4">
+                        {loanBal > 0 ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-black bg-amber-50 text-amber-800 border border-amber-300">
+                            Rs. {loanBal.toLocaleString()}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400">Rs. 0 (Clear)</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-right space-x-1.5 whitespace-nowrap no-print">
+                        <button
+                          onClick={() => handleOpenLedger(st)}
+                          className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md text-xs font-semibold transition border border-indigo-200"
+                        >
+                          Ledger
+                        </button>
+                        <button 
+                          onClick={() => handleOpenStaffForm(st)} 
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 transition"
+                        >
+                          <Edit className="h-4 w-4 inline" />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteStaff(st.id)} 
+                          className="p-1.5 text-slate-400 hover:text-rose-600 transition"
+                        >
+                          <Trash className="h-4 w-4 inline" />
+                        </button>
                       </td>
                     </tr>
-                  )}
-                </tbody>
-                {filteredStaff.length > 0 && (
-                  <tfoot className="bg-slate-900 text-white font-bold text-xs">
-                    <tr>
-                      <td colSpan={3} className="px-6 py-3 font-black">Staff Roster Totals ({filteredStaff.length} Active Staff):</td>
-                      <td className="px-6 py-3 font-black text-emerald-300">
-                        Rs. {filteredStaff.reduce((sum, s) => sum + s.basicSalary, 0).toLocaleString()} / mo
-                      </td>
-                      <td className="px-6 py-3 font-black text-amber-300">
-                        Rs. {filteredStaff.reduce((sum, s) => sum + (balances?.staffBalances[s.id]?.advanceLoanBalance || 0), 0).toLocaleString()}
-                      </td>
-                      <td className="no-print"></td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-            Software by Roonjha Developer - 03152914836
-          </div>
+
+          <Pagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalItems={filteredStaff.length}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+          />
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 2: SALARIES, ADVANCES & DISBURSEMENTS REGISTER */}
-      {/* ========================================================================= */}
+      {/* TAB 2: SALARIES & PAYMENTS */}
       {activeSubTab === 'payments' && (
-        <div className="print-a4 print-container space-y-4">
-          <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-            <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
-              STAFF SALARIES & ADVANCES DISBURSEMENT REGISTER
-            </p>
-            <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
-              <div>Total Records: {payments.length}</div>
-              <div>Generated: {new Date().toLocaleDateString('en-GB')}</div>
-            </div>
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+              <thead className="bg-slate-50 text-slate-600 uppercase text-xs font-bold">
+                <tr>
+                  <th className="px-5 py-3.5">Date / ID</th>
+                  <th className="px-5 py-3.5">Employee Name</th>
+                  <th className="px-5 py-3.5">Payment Type</th>
+                  <th className="px-5 py-3.5">Particulars / Description</th>
+                  <th className="px-5 py-3.5 text-right">Gross Salary / Amount</th>
+                  <th className="px-5 py-3.5 text-right">Advance Adjusted</th>
+                  <th className="px-5 py-3.5 text-right">Net Cash/Bank Paid</th>
+                  <th className="px-5 py-3.5 text-right no-print">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {paginatedPayments.map(p => {
+                  const emp = staff.find(s => s.id === p.staffId);
+                  return (
+                    <tr key={p.id} className="hover:bg-slate-50/75 transition">
+                      <td className="px-5 py-3.5 whitespace-nowrap">
+                        <span className="font-mono font-bold text-indigo-700 block">{p.id}</span>
+                        <span className="text-xs text-slate-500">{p.date}</span>
+                      </td>
+                      <td className="px-5 py-3.5 whitespace-nowrap">
+                        <p className="font-bold text-slate-800">{emp?.name || p.staffId}</p>
+                        <p className="text-xs text-slate-400">{emp?.designation || 'Staff'}</p>
+                      </td>
+                      <td className="px-5 py-3.5 whitespace-nowrap">
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold uppercase ${
+                          p.type === 'salary' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {p.type}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 max-w-xs truncate text-slate-600">
+                        {p.description}
+                      </td>
+                      <td className="px-5 py-3.5 text-right font-semibold text-slate-800 whitespace-nowrap">
+                        Rs. {p.amount.toLocaleString()}
+                      </td>
+                      <td className="px-5 py-3.5 text-right text-amber-700 font-semibold whitespace-nowrap">
+                        {p.advanceAdjusted ? `-Rs. ${p.advanceAdjusted.toLocaleString()}` : '—'}
+                      </td>
+                      <td className="px-5 py-3.5 text-right font-black text-emerald-700 whitespace-nowrap">
+                        Rs. {p.netPaid.toLocaleString()}
+                        <span className="block text-[10px] text-slate-400 uppercase font-medium">{p.paymentType}</span>
+                      </td>
+                      <td className="px-5 py-3.5 text-right whitespace-nowrap no-print">
+                        <button
+                          onClick={() => handleDeletePayment(p.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 transition"
+                          title="Delete Payment"
+                        >
+                          <Trash className="h-4 w-4 inline" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-left">
-                <thead className="bg-slate-50 text-slate-600 uppercase text-xs font-bold tracking-wider">
-                  <tr>
-                    <th className="px-6 py-3.5">Date</th>
-                    <th className="px-6 py-3.5">Employee</th>
-                    <th className="px-6 py-3.5">Type</th>
-                    <th className="px-6 py-3.5">Gross Amt</th>
-                    <th className="px-6 py-3.5">Advance Deducted</th>
-                    <th className="px-6 py-3.5">Net Cash Paid</th>
-                    <th className="px-6 py-3.5">Channel</th>
-                    <th className="px-6 py-3.5 text-right no-print">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {filteredPayments.map(pmt => {
-                    const stMember = staff.find(s => s.id === pmt.staffId);
+          <Pagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalItems={filteredPayments.length}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+          />
+        </div>
+      )}
 
-                    return (
-                      <tr key={pmt.id} className="hover:bg-slate-50/75 transition">
-                        <td className="px-6 py-4 text-slate-500 font-mono text-xs">{pmt.date}</td>
-                        <td className="px-6 py-4">
-                          <div className="font-bold text-slate-800">{stMember?.name || pmt.staffId}</div>
-                          <div className="text-[11px] font-mono text-indigo-600 font-semibold">{pmt.id}</div>
-                          {pmt.description && (
-                            <div className="text-[11px] text-slate-400 font-normal italic">{pmt.description}</div>
-                          )}
+      {/* TAB 3: DRIVER ADVANCES & ROUTE SETTLEMENTS */}
+      {activeSubTab === 'driver_advances' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Advances Issued Table */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="bg-slate-50 p-3.5 border-b border-slate-200 flex justify-between items-center">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center space-x-1.5">
+                  <Wallet className="h-4 w-4 text-amber-600" />
+                  <span>Route Advances Issued (ڈرائیور پیشگی رقم)</span>
+                </h3>
+                <span className="text-xs font-bold text-amber-800">
+                  Total: Rs. {driverAdvances.reduce((s, a) => s + (a.amount || 0), 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="overflow-x-auto max-h-[500px]">
+                <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500 uppercase font-bold">
+                    <tr>
+                      <th className="px-3 py-2.5">Date / ID</th>
+                      <th className="px-3 py-2.5">Driver Name</th>
+                      <th className="px-3 py-2.5">Purpose / Route</th>
+                      <th className="px-3 py-2.5 text-right">Advance Amount</th>
+                      <th className="px-3 py-2.5 text-right no-print">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {driverAdvances.map(adv => (
+                      <tr key={adv.id} className="hover:bg-slate-50">
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <span className="font-mono font-bold text-amber-700 block">{adv.id}</span>
+                          <span className="text-slate-400">{adv.date}</span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase ${
-                            pmt.type === 'salary' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
-                            pmt.type === 'advance' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
-                            pmt.type === 'loan' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
-                            'bg-slate-50 text-slate-700 border border-slate-200'
-                          }`}>
-                            {pmt.type}
-                          </span>
+                        <td className="px-3 py-2.5 font-bold text-slate-800 whitespace-nowrap">
+                          {adv.driverName || staff.find(s => s.id === adv.driverId)?.name || adv.driverId}
                         </td>
-                        <td className="px-6 py-4 font-bold text-slate-700">Rs. {pmt.amount.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-amber-600 font-medium">
-                          {pmt.advanceAdjusted ? `Rs. ${pmt.advanceAdjusted.toLocaleString()}` : '—'}
+                        <td className="px-3 py-2.5 text-slate-600">{adv.purpose}</td>
+                        <td className="px-3 py-2.5 text-right font-black text-amber-900 whitespace-nowrap">
+                          Rs. {adv.amount.toLocaleString()}
                         </td>
-                        <td className="px-6 py-4 font-black text-emerald-600">Rs. {pmt.netPaid.toLocaleString()}</td>
-                        <td className="px-6 py-4 text-slate-600 font-medium text-xs">
-                          {pmt.paymentType} {pmt.bankId ? `(${banks.find(b => b.id === pmt.bankId)?.name || 'Bank'})` : ''}
-                        </td>
-                        <td className="px-6 py-4 text-right space-x-2 whitespace-nowrap no-print">
-                          <button onClick={() => handleOpenPaymentForm(pmt)} className="text-slate-400 hover:text-indigo-600 transition">
-                            <Edit className="h-4 w-4 inline" />
-                          </button>
-                          <button onClick={() => handleDeletePayment(pmt.id)} className="text-slate-400 hover:text-rose-600 transition">
-                            <Trash className="h-4 w-4 inline" />
+                        <td className="px-3 py-2.5 text-right no-print">
+                          <button
+                            onClick={() => handleDeleteDriverAdvance(adv.id)}
+                            className="p-1 text-slate-400 hover:text-rose-600"
+                          >
+                            <Trash className="h-3.5 w-3.5" />
                           </button>
                         </td>
                       </tr>
-                    );
-                  })}
-                  {filteredPayments.length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="text-center py-12 text-slate-400">
-                        {searchQuery ? `No matching disbursements found for "${searchQuery}".` : 'No salary or loan disbursements recorded.'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-                {filteredPayments.length > 0 && (
-                  <tfoot className="bg-slate-900 text-white font-bold text-xs">
-                    <tr>
-                      <td colSpan={3} className="px-6 py-3 font-black">Disbursements Totals ({filteredPayments.length} Transactions):</td>
-                      <td className="px-6 py-3 font-black text-rose-300">
-                        Rs. {filteredPayments.reduce((sum, p) => sum + p.amount, 0).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-3 font-black text-amber-300">
-                        Rs. {filteredPayments.reduce((sum, p) => sum + (p.advanceAdjusted || 0), 0).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-3 font-black text-emerald-300">
-                        Rs. {filteredPayments.reduce((sum, p) => sum + p.netPaid, 0).toLocaleString()}
-                      </td>
-                      <td colSpan={2} className="no-print"></td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-          <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-            Software by Roonjha Developer - 03152914836
+
+            {/* Expense Settlements Table */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="bg-slate-50 p-3.5 border-b border-slate-200 flex justify-between items-center">
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center space-x-1.5">
+                  <CheckCircle className="h-4 w-4 text-emerald-600" />
+                  <span>Expense Claims &amp; Settlements (خرچہ واؤچر)</span>
+                </h3>
+                <span className="text-xs font-bold text-emerald-800">
+                  Approved: Rs. {driverExpenses.reduce((s, e) => s + (e.amountApproved || 0), 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="overflow-x-auto max-h-[500px]">
+                <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500 uppercase font-bold">
+                    <tr>
+                      <th className="px-3 py-2.5">Date / ID</th>
+                      <th className="px-3 py-2.5">Driver</th>
+                      <th className="px-3 py-2.5">Category &amp; Remarks</th>
+                      <th className="px-3 py-2.5 text-right">Claimed</th>
+                      <th className="px-3 py-2.5 text-right">Approved</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {driverExpenses.map(exp => (
+                      <tr key={exp.id} className="hover:bg-slate-50">
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <span className="font-mono font-bold text-emerald-700 block">{exp.id}</span>
+                          <span className="text-slate-400">{exp.date}</span>
+                        </td>
+                        <td className="px-3 py-2.5 font-bold text-slate-800 whitespace-nowrap">
+                          {exp.driverName || staff.find(s => s.id === exp.driverId)?.name || exp.driverId}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className="font-bold text-slate-700">{exp.category}: </span>
+                          <span className="text-slate-500">{exp.description}</span>
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-medium text-slate-600 whitespace-nowrap">
+                          Rs. {exp.amountClaimed.toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-black text-emerald-700 whitespace-nowrap">
+                          Rs. {exp.amountApproved.toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* TAB 3: STAFF LEDGER & STATEMENTS (MONTH-WISE & CHRONOLOGICAL) */}
-      {/* ========================================================================= */}
+      {/* TAB 4: STAFF LEDGER & STATEMENTS */}
       {activeSubTab === 'ledger' && (
-        <div className="space-y-6">
-          {/* Ledger Control & Filter Bar */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4 no-print">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-3">
-                {/* Staff Member Selector */}
-                <div className="min-w-[240px]">
-                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Select Staff Member
-                  </label>
-                  <select
-                    value={activeLedgerStaffId}
-                    onChange={e => setActiveLedgerStaffId(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="all">👥 All Staff Members (Payroll Register)</option>
-                    {staff.map(s => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} ({s.designation || 'Staff'}) — Base: Rs. {s.basicSalary.toLocaleString()}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Month Filter */}
-                <div className="min-w-[170px]">
-                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Month Filter
-                  </label>
-                  <select
-                    value={selectedMonth}
-                    onChange={e => handleMonthFilterChange(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:border-indigo-500"
-                  >
-                    {ALL_MONTHS.map(m => (
-                      <option key={m.value} value={m.value}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Year Filter */}
-                <div className="min-w-[120px]">
-                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    Year
-                  </label>
-                  <select
-                    value={selectedYear}
-                    onChange={e => handleYearFilterChange(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-800 focus:outline-none focus:border-indigo-500"
-                  >
-                    <option value="all">All Years</option>
-                    {availableYears.map(yr => (
-                      <option key={yr} value={yr}>
-                        {yr} {yr === String(new Date().getFullYear()) ? '(Current)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Date Range Start */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    From Date
-                  </label>
-                  <input
-                    type="date"
-                    value={ledgerStartDate}
-                    onChange={e => { setLedgerStartDate(e.target.value); }}
-                    className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                {/* Date Range End */}
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    To Date
-                  </label>
-                  <input
-                    type="date"
-                    value={ledgerEndDate}
-                    onChange={e => { setLedgerEndDate(e.target.value); }}
-                    className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              {/* Reset Filters */}
-              {(selectedMonth !== 'all' || selectedYear !== 'all' || ledgerStartDate || ledgerEndDate || activeLedgerStaffId !== 'all') && (
-                <button
-                  onClick={() => {
-                    setSelectedYear(String(new Date().getFullYear()));
-                    setSelectedMonth('all');
-                    setLedgerStartDate('');
-                    setLedgerEndDate('');
-                    setActiveLedgerStaffId('all');
-                  }}
-                  className="text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-lg transition"
-                >
-                  Reset All Filters
-                </button>
-              )}
+        <div className="space-y-4">
+          <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-3 no-print">
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-bold text-slate-700 uppercase">Select Staff Member:</span>
+              <select
+                value={activeLedgerStaffId}
+                onChange={e => setActiveLedgerStaffId(e.target.value)}
+                className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-bold bg-white"
+              >
+                <option value="all">-- All Staff Members Overview --</option>
+                {staff.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.category || s.designation})</option>
+                ))}
+              </select>
             </div>
           </div>
 
-          {/* PRINTABLE A4 WRAPPER */}
-          <div className="print-a4 print-container space-y-6">
-            {/* Print Header */}
-            <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-              <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">
-                {selectedLedgerStaff 
-                  ? `INDIVIDUAL EMPLOYEE SALARY & ADVANCE STATEMENT` 
-                  : `MONTHLY STAFF PAYROLL & ADVANCES REGISTER (${getFilterPeriodLabel()})`}
-              </p>
-              <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
+          {selectedLedgerStaff ? (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-4">
+              <div className="flex justify-between items-center border-b pb-3">
                 <div>
-                  {selectedLedgerStaff ? `Employee: ${selectedLedgerStaff.name} (${selectedLedgerStaff.id})` : `Total Employees: ${staff.length}`}
+                  <h3 className="text-lg font-bold text-slate-900">{selectedLedgerStaff.name}</h3>
+                  <p className="text-xs text-slate-500">ID: {selectedLedgerStaff.id} • Base Salary: Rs. {selectedLedgerStaff.basicSalary.toLocaleString()} / mo</p>
                 </div>
-                <div>Generated: {new Date().toLocaleDateString('en-GB')} {new Date().toLocaleTimeString('en-GB')}</div>
+                <div className="text-right">
+                  <span className="text-xs text-slate-500 font-bold uppercase block">Current Advance / Loan</span>
+                  <span className="text-lg font-black text-amber-700">
+                    Rs. {(balances?.staffBalances[selectedLedgerStaff.id]?.advanceLoanBalance || 0).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600 uppercase font-bold">
+                    <tr>
+                      <th className="px-3 py-2.5">Date / ID</th>
+                      <th className="px-3 py-2.5">Transaction Type</th>
+                      <th className="px-3 py-2.5">Description</th>
+                      <th className="px-3 py-2.5 text-right">Advance Given (Debit)</th>
+                      <th className="px-3 py-2.5 text-right">Advance Deducted (Credit)</th>
+                      <th className="px-3 py-2.5 text-right">Net Cash Paid</th>
+                      <th className="px-3 py-2.5 text-right">Running Advance Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {staffEnrichedTransactions.map((tx, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50">
+                        <td className="px-3 py-2.5 font-mono text-indigo-700 font-bold">{tx.date} ({tx.id})</td>
+                        <td className="px-3 py-2.5 uppercase font-bold text-slate-700">{tx.type}</td>
+                        <td className="px-3 py-2.5 text-slate-600">{tx.description}</td>
+                        <td className="px-3 py-2.5 text-right font-bold text-amber-700">
+                          {tx.advanceGiven > 0 ? `Rs. ${tx.advanceGiven.toLocaleString()}` : '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-bold text-emerald-700">
+                          {tx.advanceDeducted > 0 ? `Rs. ${tx.advanceDeducted.toLocaleString()}` : '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-black text-slate-900">
+                          Rs. {tx.netPaid.toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-black text-indigo-900 bg-indigo-50/30">
+                          Rs. {tx.runningBal.toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
-
-            {/* ============================================================= */}
-            {/* VIEW A: INDIVIDUAL STAFF MEMBER SELECTED */}
-            {/* ============================================================= */}
-            {selectedLedgerStaff ? (
-              <div className="space-y-6">
-                {/* Employee Profile & Lifetime KPI Cards */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-                    <div className="flex items-center space-x-3">
-                      <div className="h-12 w-12 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-xl shadow-md shadow-indigo-100">
-                        {selectedLedgerStaff.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <h3 className="text-lg font-black text-slate-800">{selectedLedgerStaff.name}</h3>
-                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                            {selectedLedgerStaff.designation || 'Staff'}
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-500 mt-0.5">
-                          Phone: <span className="font-semibold text-slate-700">{selectedLedgerStaff.phone || 'N/A'}</span> • ID: <span className="font-mono text-slate-400">{selectedLedgerStaff.id}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-3 no-print">
-                      <button
-                        onClick={() => handleQuickPay(selectedLedgerStaff)}
-                        className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition shadow-sm"
-                      >
-                        <DollarSign className="h-3.5 w-3.5" />
-                        <span>Process Payment</span>
-                      </button>
-                      <button
-                        onClick={() => setActiveLedgerStaffId('all')}
-                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition"
-                      >
-                        ← Back to All Staff
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Summary Metric Cards */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Base Salary</div>
-                      <div className="text-base font-black text-slate-800 mt-0.5">
-                        Rs. {selectedLedgerStaff.basicSalary.toLocaleString()}
-                      </div>
-                      <div className="text-[10px] text-slate-400">per month</div>
-                    </div>
-
-                    <div className="bg-indigo-50/50 p-3 rounded-lg border border-indigo-100">
-                      <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Gross Processed</div>
-                      <div className="text-base font-black text-indigo-700 mt-0.5">
-                        Rs. {staffMonthSummaries.reduce((sum, m) => sum + m.grossSalary, 0).toLocaleString()}
-                      </div>
-                      <div className="text-[10px] text-indigo-400">Lifetime Gross</div>
-                    </div>
-
-                    <div className="bg-amber-50/50 p-3 rounded-lg border border-amber-100">
-                      <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Advance Taken</div>
-                      <div className="text-base font-black text-amber-700 mt-0.5">
-                        Rs. {staffMonthSummaries.reduce((sum, m) => sum + m.advanceTaken, 0).toLocaleString()}
-                      </div>
-                      <div className="text-[10px] text-amber-500">Loans & Advances</div>
-                    </div>
-
-                    <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-100">
-                      <div className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Advance Deducted</div>
-                      <div className="text-base font-black text-blue-700 mt-0.5">
-                        Rs. {staffMonthSummaries.reduce((sum, m) => sum + m.advanceDeducted, 0).toLocaleString()}
-                      </div>
-                      <div className="text-[10px] text-blue-400">Adjusted in Salary</div>
-                    </div>
-
-                    <div className="bg-emerald-50/50 p-3 rounded-lg border border-emerald-100">
-                      <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Net Cash Paid</div>
-                      <div className="text-base font-black text-emerald-700 mt-0.5">
-                        Rs. {staffMonthSummaries.reduce((sum, m) => sum + m.netPaid, 0).toLocaleString()}
-                      </div>
-                      <div className="text-[10px] text-emerald-500">Take-Home Cash</div>
-                    </div>
-
-                    <div className={`p-3 rounded-lg border ${
-                      (balances?.staffBalances[selectedLedgerStaff.id]?.advanceLoanBalance || 0) > 0
-                        ? 'bg-amber-100 border-amber-300 text-amber-900'
-                        : 'bg-slate-50 border-slate-200 text-slate-700'
-                    }`}>
-                      <div className="text-[10px] font-bold uppercase tracking-wider">Current Advance Bal</div>
-                      <div className="text-base font-black mt-0.5">
-                        Rs. {(balances?.staffBalances[selectedLedgerStaff.id]?.advanceLoanBalance || 0).toLocaleString()}
-                      </div>
-                      <div className="text-[10px] font-medium">
-                        {(balances?.staffBalances[selectedLedgerStaff.id]?.advanceLoanBalance || 0) > 0 ? 'Pending Recovery' : 'Settled / Clear'}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* SECTION 1: MONTH-WISE SUMMARY BREAKDOWN TABLE */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden space-y-3">
-                  <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-slate-800 text-sm flex items-center space-x-2">
-                        <Calendar className="h-4 w-4 text-indigo-600" />
-                        <span>Month-by-Month Statement Summary</span>
-                      </h4>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Aggregated monthly salaries, advances drawn, salary adjustments, and month-end loan balances
-                      </p>
-                    </div>
-                    <span className="text-xs font-mono font-bold text-slate-400">
-                      {staffMonthSummaries.length} Months Active
-                    </span>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-slate-200 text-left">
-                      <thead className="bg-slate-100/75 text-slate-600 uppercase text-xs font-bold tracking-wider">
-                        <tr>
-                          <th className="px-6 py-3">Month</th>
-                          <th className="px-6 py-3">Base Salary</th>
-                          <th className="px-6 py-3">Gross Salary Paid</th>
-                          <th className="px-6 py-3">Advance / Loan Taken</th>
-                          <th className="px-6 py-3">Advance Deducted</th>
-                          <th className="px-6 py-3">Net Cash Paid</th>
-                          <th className="px-6 py-3">Month-End Loan Balance</th>
-                          <th className="px-6 py-3 text-center">Status</th>
+          ) : (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600 uppercase font-bold">
+                    <tr>
+                      <th className="px-4 py-3">Staff Member</th>
+                      <th className="px-4 py-3">Category</th>
+                      <th className="px-4 py-3 text-right">Base Salary</th>
+                      <th className="px-4 py-3 text-right">Outstanding Advance</th>
+                      <th className="px-4 py-3 text-right no-print">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {staff.map(s => {
+                      const curBal = balances?.staffBalances[s.id]?.advanceLoanBalance || 0;
+                      return (
+                        <tr key={s.id} className="hover:bg-slate-50">
+                          <td className="px-4 py-3 font-bold text-slate-800">{s.name} ({s.id})</td>
+                          <td className="px-4 py-3 text-slate-600">{s.category || s.designation}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-slate-700">Rs. {s.basicSalary.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-black text-amber-700">Rs. {curBal.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right no-print">
+                            <button
+                              onClick={() => handleOpenLedger(s)}
+                              className="text-indigo-600 hover:text-indigo-800 font-bold"
+                            >
+                              View Statement ➔
+                            </button>
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-sm">
-                        {staffMonthSummaries.map(mRow => (
-                          <tr key={mRow.month} className="hover:bg-slate-50/75 transition">
-                            <td className="px-6 py-3.5 font-bold text-slate-800 flex items-center space-x-2">
-                              <span>{mRow.monthName}</span>
-                              <span className="text-[10px] font-mono text-slate-400">({mRow.month})</span>
-                            </td>
-                            <td className="px-6 py-3.5 text-slate-600 font-medium">
-                              Rs. {selectedLedgerStaff.basicSalary.toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3.5 font-bold text-indigo-700">
-                              {mRow.grossSalary > 0 ? `Rs. ${mRow.grossSalary.toLocaleString()}` : '—'}
-                            </td>
-                            <td className="px-6 py-3.5 font-bold text-amber-600">
-                              {mRow.advanceTaken > 0 ? `Rs. ${mRow.advanceTaken.toLocaleString()}` : '—'}
-                            </td>
-                            <td className="px-6 py-3.5 font-bold text-blue-600">
-                              {mRow.advanceDeducted > 0 ? `Rs. ${mRow.advanceDeducted.toLocaleString()}` : '—'}
-                            </td>
-                            <td className="px-6 py-3.5 font-black text-emerald-600">
-                              Rs. {mRow.netPaid.toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3.5 font-bold text-slate-800">
-                              {mRow.monthEndBalance > 0 ? (
-                                <span className="text-amber-600">Rs. {mRow.monthEndBalance.toLocaleString()}</span>
-                              ) : (
-                                <span className="text-slate-400">Rs. 0</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-3.5 text-center">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
-                                mRow.status.includes('Salary Paid') 
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
-                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
-                              }`}>
-                                {mRow.status}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                        {staffMonthSummaries.length === 0 && (
-                          <tr>
-                            <td colSpan={8} className="text-center py-8 text-slate-400">
-                              No monthly payout records found for this employee.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                      {staffMonthSummaries.length > 0 && (
-                        <tfoot className="bg-slate-900 text-white font-bold text-xs">
-                          <tr>
-                            <td colSpan={2} className="px-6 py-3 font-black">Statement Summary Totals:</td>
-                            <td className="px-6 py-3 font-black text-indigo-300">
-                              Rs. {staffMonthSummaries.reduce((sum, m) => sum + m.grossSalary, 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3 font-black text-amber-300">
-                              Rs. {staffMonthSummaries.reduce((sum, m) => sum + m.advanceTaken, 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3 font-black text-blue-300">
-                              Rs. {staffMonthSummaries.reduce((sum, m) => sum + m.advanceDeducted, 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3 font-black text-emerald-300">
-                              Rs. {staffMonthSummaries.reduce((sum, m) => sum + m.netPaid, 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3 font-black text-amber-300">
-                              Rs. {(balances?.staffBalances[selectedLedgerStaff.id]?.advanceLoanBalance || 0).toLocaleString()}
-                            </td>
-                            <td></td>
-                          </tr>
-                        </tfoot>
-                      )}
-                    </table>
-                  </div>
-                </div>
-
-                {/* SECTION 2: DETAILED CHRONOLOGICAL TRANSACTION LEDGER */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden space-y-3">
-                  <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h4 className="font-bold text-slate-800 text-sm flex items-center space-x-2">
-                        <FileText className="h-4 w-4 text-indigo-600" />
-                        <span>Detailed Chronological Ledger & Running Loan Balance</span>
-                      </h4>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Every salary slip, advance payout, loan adjustment, and running balance calculation
-                      </p>
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Showing <span className="font-bold text-slate-700">{filteredLedgerTransactions.length}</span> transactions
-                      {(selectedMonth !== 'all' || selectedYear !== 'all') && ` in ${getFilterPeriodLabel()}`}
-                    </div>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-slate-200 text-left">
-                      <thead className="bg-slate-100/75 text-slate-600 uppercase text-xs font-bold tracking-wider">
-                        <tr>
-                          <th className="px-5 py-3">Date</th>
-                          <th className="px-5 py-3">Slip / Ref</th>
-                          <th className="px-5 py-3">Type</th>
-                          <th className="px-5 py-3">Description / Memo</th>
-                          <th className="px-5 py-3">Channel</th>
-                          <th className="px-5 py-3 text-right">Advance Given (+Dr)</th>
-                          <th className="px-5 py-3 text-right">Advance Deducted (-Cr)</th>
-                          <th className="px-5 py-3 text-right">Gross Salary</th>
-                          <th className="px-5 py-3 text-right">Net Cash Paid</th>
-                          <th className="px-5 py-3 text-right">Running Advance Balance</th>
-                          <th className="px-4 py-3 text-center no-print">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-xs">
-                        {filteredLedgerTransactions.map(tx => (
-                          <tr key={tx.id} className="hover:bg-slate-50/75 transition">
-                            <td className="px-5 py-3 font-mono font-medium text-slate-600 whitespace-nowrap">{tx.date}</td>
-                            <td className="px-5 py-3 font-mono text-slate-500 whitespace-nowrap">{tx.id}</td>
-                            <td className="px-5 py-3 whitespace-nowrap">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                                tx.type === 'salary' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' :
-                                tx.type === 'advance' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
-                                tx.type === 'loan' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
-                                'bg-slate-50 text-slate-700 border border-slate-200'
-                              }`}>
-                                {tx.type}
-                              </span>
-                            </td>
-                            <td className="px-5 py-3 text-slate-600 max-w-[200px] truncate" title={tx.description || ''}>
-                              {tx.description || '—'}
-                            </td>
-                            <td className="px-5 py-3 text-slate-600 whitespace-nowrap">
-                              {tx.paymentType} {tx.bankId ? `(${banks.find(b => b.id === tx.bankId)?.name || 'Bank'})` : ''}
-                            </td>
-                            <td className="px-5 py-3 text-right font-bold text-amber-600 whitespace-nowrap">
-                              {tx.advanceGiven > 0 ? `Rs. ${tx.advanceGiven.toLocaleString()}` : '—'}
-                            </td>
-                            <td className="px-5 py-3 text-right font-bold text-blue-600 whitespace-nowrap">
-                              {tx.advanceDeducted > 0 ? `Rs. ${tx.advanceDeducted.toLocaleString()}` : '—'}
-                            </td>
-                            <td className="px-5 py-3 text-right font-bold text-slate-700 whitespace-nowrap">
-                              {(tx.type === 'salary' || tx.type === 'settlement') ? `Rs. ${tx.amount.toLocaleString()}` : '—'}
-                            </td>
-                            <td className="px-5 py-3 text-right font-black text-emerald-600 whitespace-nowrap">
-                              Rs. {tx.netPaid.toLocaleString()}
-                            </td>
-                            <td className="px-5 py-3 text-right font-black whitespace-nowrap">
-                              <span className={`px-2 py-0.5 rounded ${tx.runningBalance > 0 ? 'bg-amber-50 text-amber-700 font-bold' : 'text-slate-500'}`}>
-                                Rs. {tx.runningBalance.toLocaleString()}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center whitespace-nowrap space-x-1.5 no-print">
-                              <button onClick={() => handleOpenPaymentForm(tx)} className="text-slate-400 hover:text-indigo-600 transition">
-                                <Edit className="h-3.5 w-3.5 inline" />
-                              </button>
-                              <button onClick={() => handleDeletePayment(tx.id)} className="text-slate-400 hover:text-rose-600 transition">
-                                <Trash className="h-3.5 w-3.5 inline" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                        {filteredLedgerTransactions.length === 0 && (
-                          <tr>
-                            <td colSpan={11} className="text-center py-8 text-slate-400">
-                              No ledger entries found matching the filter criteria.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                      {filteredLedgerTransactions.length > 0 && (
-                        <tfoot className="bg-slate-900 text-white font-bold text-xs">
-                          <tr>
-                            <td colSpan={5} className="px-5 py-3 font-black">Filtered Totals ({filteredLedgerTransactions.length} Entries):</td>
-                            <td className="px-5 py-3 text-right font-black text-amber-300">
-                              Rs. {filteredLedgerTransactions.reduce((sum, t) => sum + t.advanceGiven, 0).toLocaleString()}
-                            </td>
-                            <td className="px-5 py-3 text-right font-black text-blue-300">
-                              Rs. {filteredLedgerTransactions.reduce((sum, t) => sum + t.advanceDeducted, 0).toLocaleString()}
-                            </td>
-                            <td className="px-5 py-3 text-right font-black text-slate-200">
-                              Rs. {filteredLedgerTransactions.reduce((sum, t) => sum + ((t.type === 'salary' || t.type === 'settlement') ? t.amount : 0), 0).toLocaleString()}
-                            </td>
-                            <td className="px-5 py-3 text-right font-black text-emerald-300">
-                              Rs. {filteredLedgerTransactions.reduce((sum, t) => sum + t.netPaid, 0).toLocaleString()}
-                            </td>
-                            <td className="px-5 py-3 text-right font-black text-amber-300">
-                              Rs. {(balances?.staffBalances[selectedLedgerStaff.id]?.advanceLoanBalance || 0).toLocaleString()}
-                            </td>
-                            <td className="no-print"></td>
-                          </tr>
-                        </tfoot>
-                      )}
-                    </table>
-                  </div>
-                </div>
-
-                {/* Printable Signature & Authorization Block */}
-                <div className="hidden print:block pt-12 pb-4">
-                  <div className="grid grid-cols-3 gap-8 text-center text-xs font-bold text-slate-700">
-                    <div className="border-t-2 border-slate-400 pt-2">
-                      <p>EMPLOYEE SIGNATURE</p>
-                      <p className="text-[10px] text-slate-400 font-normal mt-0.5">{selectedLedgerStaff.name}</p>
-                    </div>
-                    <div className="border-t-2 border-slate-400 pt-2">
-                      <p>PREPARED BY</p>
-                      <p className="text-[10px] text-slate-400 font-normal mt-0.5">Accounts Officer</p>
-                    </div>
-                    <div className="border-t-2 border-slate-400 pt-2">
-                      <p>AUTHORIZED BY</p>
-                      <p className="text-[10px] text-slate-400 font-normal mt-0.5">Director / Managing Partner</p>
-                    </div>
-                  </div>
-                </div>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            ) : (
-              /* ============================================================= */
-              /* VIEW B: ALL STAFF MONTHLY PAYROLL & ADVANCES REGISTER */
-              /* ============================================================= */
-              <div className="space-y-4">
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4">
-                    <div>
-                      <h3 className="font-bold text-slate-800 text-base flex items-center space-x-2">
-                        <Users className="h-5 w-5 text-indigo-600" />
-                        <span>All Staff Monthly Payroll & Advance Register</span>
-                      </h3>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Comprehensive summary of salaries processed, advances disbursed, deductions, and current loan balances
-                        {(selectedMonth !== 'all' || selectedYear !== 'all') && <span className="font-bold text-indigo-600"> for {getFilterPeriodLabel()}</span>}
-                      </p>
-                    </div>
-
-                    <div className="text-xs font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg">
-                      Staff Count: <span className="text-indigo-600">{allStaffMonthlyRegister.length}</span>
-                    </div>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-slate-200 text-left">
-                      <thead className="bg-slate-100/75 text-slate-600 uppercase text-xs font-bold tracking-wider">
-                        <tr>
-                          <th className="px-6 py-3.5">Staff Member</th>
-                          <th className="px-6 py-3.5">Designation</th>
-                          <th className="px-6 py-3.5">Base Salary</th>
-                          <th className="px-6 py-3.5">Period Gross Paid</th>
-                          <th className="px-6 py-3.5">Advance Taken</th>
-                          <th className="px-6 py-3.5">Advance Deducted</th>
-                          <th className="px-6 py-3.5">Net Cash Paid</th>
-                          <th className="px-6 py-3.5">Current Loan Balance</th>
-                          <th className="px-6 py-3.5 text-right no-print">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-sm">
-                        {allStaffMonthlyRegister.map(row => (
-                          <tr key={row.staff.id} className="hover:bg-slate-50/75 transition">
-                            <td className="px-6 py-4">
-                              <div className="font-bold text-slate-800">{row.staff.name}</div>
-                              <div className="text-[11px] text-slate-400">{row.staff.phone || 'No phone'}</div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
-                                {row.staff.designation || 'Staff'}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 font-semibold text-slate-700">
-                              Rs. {row.staff.basicSalary.toLocaleString()}
-                            </td>
-                            <td className="px-6 py-4 font-bold text-indigo-700">
-                              {row.grossSalary > 0 ? `Rs. ${row.grossSalary.toLocaleString()}` : '—'}
-                            </td>
-                            <td className="px-6 py-4 font-bold text-amber-600">
-                              {row.advanceTaken > 0 ? `Rs. ${row.advanceTaken.toLocaleString()}` : '—'}
-                            </td>
-                            <td className="px-6 py-4 font-bold text-blue-600">
-                              {row.advanceDeducted > 0 ? `Rs. ${row.advanceDeducted.toLocaleString()}` : '—'}
-                            </td>
-                            <td className="px-6 py-4 font-black text-emerald-600">
-                              Rs. {row.netPaid.toLocaleString()}
-                            </td>
-                            <td className="px-6 py-4">
-                              {row.currentBalance > 0 ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                                  Rs. {row.currentBalance.toLocaleString()}
-                                </span>
-                              ) : (
-                                <span className="text-slate-400 text-xs">No Balance</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 text-right space-x-2 whitespace-nowrap no-print">
-                              <button
-                                onClick={() => {
-                                  setActiveLedgerStaffId(row.staff.id);
-                                }}
-                                className="inline-flex items-center space-x-1 px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md text-xs font-bold transition border border-indigo-200"
-                              >
-                                <ClipboardList className="h-3.5 w-3.5" />
-                                <span>View Ledger</span>
-                              </button>
-                              <button
-                                onClick={() => handleQuickPay(row.staff)}
-                                className="inline-flex items-center space-x-1 px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-md text-xs font-bold transition border border-emerald-200"
-                              >
-                                <DollarSign className="h-3.5 w-3.5" />
-                                <span>Pay</span>
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                        {allStaffMonthlyRegister.length === 0 && (
-                          <tr>
-                            <td colSpan={9} className="text-center py-12 text-slate-400">
-                              No staff records found.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                      {allStaffMonthlyRegister.length > 0 && (
-                        <tfoot className="bg-slate-900 text-white font-bold text-xs">
-                          <tr>
-                            <td colSpan={2} className="px-6 py-3 font-black">All Staff Register Totals:</td>
-                            <td className="px-6 py-3 font-black text-emerald-300">
-                              Rs. {allStaffMonthlyRegister.reduce((sum, r) => sum + r.staff.basicSalary, 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3 font-black text-indigo-300">
-                              Rs. {allStaffMonthlyRegister.reduce((sum, r) => sum + r.grossSalary, 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3 font-black text-amber-300">
-                              Rs. {allStaffMonthlyRegister.reduce((sum, r) => sum + r.advanceTaken, 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3 font-black text-blue-300">
-                              Rs. {allStaffMonthlyRegister.reduce((sum, r) => sum + r.advanceDeducted, 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3 font-black text-emerald-300">
-                              Rs. {allStaffMonthlyRegister.reduce((sum, r) => sum + r.netPaid, 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3 font-black text-amber-300">
-                              Rs. {allStaffMonthlyRegister.reduce((sum, r) => sum + r.currentBalance, 0).toLocaleString()}
-                            </td>
-                            <td className="no-print"></td>
-                          </tr>
-                        </tfoot>
-                      )}
-                    </table>
-                  </div>
-                </div>
-
-                {/* Printable Signature & Authorization Block */}
-                <div className="hidden print:block pt-12 pb-4">
-                  <div className="grid grid-cols-2 gap-8 text-center text-xs font-bold text-slate-700">
-                    <div className="border-t-2 border-slate-400 pt-2">
-                      <p>PREPARED BY</p>
-                      <p className="text-[10px] text-slate-400 font-normal mt-0.5">Accounts Officer</p>
-                    </div>
-                    <div className="border-t-2 border-slate-400 pt-2">
-                      <p>AUTHORIZED BY</p>
-                      <p className="text-[10px] text-slate-400 font-normal mt-0.5">Director / Managing Partner</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-              Software by Roonjha Developer - 03152914836
             </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 1: STAFF PROFILE FORM */}
-      {/* ========================================================================= */}
+      {/* Modal for Staff Form */}
       {isStaffFormOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex justify-center items-center z-50 no-print">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-100 w-full max-w-md overflow-hidden">
-            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-slate-800">
-                {editingStaffId ? 'Edit Employee Profile' : 'Register Staff Member'}
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden">
+            <div className="bg-indigo-900 text-white p-4 flex items-center justify-between">
+              <h3 className="font-bold text-base">
+                {editingStaffId ? `Edit Staff Profile (#${editingStaffId})` : 'Add New Staff / Driver Profile'}
               </h3>
-              <button onClick={() => setIsStaffFormOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
+              <button onClick={() => setIsStaffFormOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
             </div>
-            
-            <form onSubmit={handleSaveStaff} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Employee Name</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="e.g. Habib Ur Rehman"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
-                />
-              </div>
 
-              <div className="grid grid-cols-2 gap-4">
+            <form onSubmit={handleSaveStaff} className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Phone Number</label>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Full Name *</label>
                   <input
                     type="text"
+                    required
+                    placeholder="e.g. Hafeez Khan"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Category / Role *</label>
+                  <select
+                    value={category}
+                    onChange={e => setCategory(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
+                  >
+                    {defaultCategories.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    placeholder="03xx-xxxxxxx"
                     value={phone}
                     onChange={e => setPhone(e.target.value)}
-                    placeholder="e.g. 0345-1234567"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Designation</label>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">CNIC Number</label>
                   <input
                     type="text"
-                    value={designation}
-                    onChange={e => setDesignation(e.target.value)}
-                    placeholder="e.g. Driver, Operator, Clerk"
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                    placeholder="54400-xxxxxxx-x"
+                    value={cnic}
+                    onChange={e => setCnic(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1 flex items-center justify-between">
+                    <span>CNIC / Doc Photo</span>
+                    {cnicDocUrl && (
+                      <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
+                        <CheckCircle className="h-3 w-3" /> Photo Added
+                      </span>
+                    )}
+                  </label>
+                  
+                  {cnicDocUrl ? (
+                    <div className="flex items-center space-x-2 p-1.5 bg-slate-50 border border-slate-300 rounded-lg">
+                      <img 
+                        src={cnicDocUrl} 
+                        alt="Preview" 
+                        className="h-9 w-12 object-cover rounded border border-slate-200 bg-white" 
+                      />
+                      <div className="flex-1 flex items-center space-x-1.5">
+                        <label 
+                          htmlFor="cnic-file-input" 
+                          className="cursor-pointer px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                        >
+                          <Upload className="h-3 w-3" />
+                          Change
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setCnicDocUrl('')}
+                          className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded text-[11px] font-semibold flex items-center gap-1 transition-colors"
+                        >
+                          <Trash className="h-3 w-3" />
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label 
+                        htmlFor="cnic-file-input"
+                        className={`w-full flex items-center justify-center space-x-2 px-3 py-2 border-2 border-dashed rounded-lg cursor-pointer transition-all ${
+                          isUploadingImage 
+                            ? 'border-indigo-400 bg-indigo-50 text-indigo-700' 
+                            : 'border-slate-300 hover:border-indigo-500 hover:bg-indigo-50/40 text-slate-600'
+                        }`}
+                      >
+                        {isUploadingImage ? (
+                          <>
+                            <div className="animate-spin h-3.5 w-3.5 border-2 border-indigo-600 border-t-transparent rounded-full" />
+                            <span className="text-xs font-semibold">Processing...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Camera className="h-3.5 w-3.5 text-indigo-600" />
+                            <span className="text-xs font-semibold">Upload Photo / CNIC</span>
+                          </>
+                        )}
+                      </label>
+                    </div>
+                  )}
+
+                  <input
+                    id="cnic-file-input"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleImageUpload(e.target.files[0]);
+                      }
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Base Salary (Rs.)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="e.g. 50000"
+                    value={basicSalary === 0 ? '' : basicSalary}
+                    onChange={e => setBasicSalary(e.target.value === '' ? 0 : Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Salary Type</label>
+                  <select
+                    value={salaryType}
+                    onChange={e => setSalaryType(e.target.value as any)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                  >
+                    <option value="Monthly">Monthly</option>
+                    <option value="Daily">Daily</option>
+                    <option value="Trip-based">Trip-based</option>
+                    <option value="Commission">Commission</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Driving License #</label>
+                  <input
+                    type="text"
+                    placeholder="License #"
+                    value={licenseNo}
+                    onChange={e => setLicenseNo(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Basic Salary (Rs. per Month)</label>
-                <input
-                  type="number"
-                  min="0"
-                  required
-                  value={basicSalary}
-                  onChange={e => setBasicSalary(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Address / Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Employee address, hometown, references..."
+                  value={address}
+                  onChange={e => setAddress(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
                 />
               </div>
 
-              <div className="pt-4 border-t border-slate-100 flex justify-end space-x-2">
+              <div className="flex justify-end space-x-2 pt-3 border-t">
                 <button
                   type="button"
                   onClick={() => setIsStaffFormOpen(false)}
-                  className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50"
+                  className="px-4 py-2 border rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold"
                 >
-                  {editingStaffId ? 'Save Changes' : 'Create Profile'}
+                  Save Profile
                 </button>
               </div>
             </form>
@@ -1590,127 +1341,130 @@ export default function StaffManagement() {
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 2: SALARY & ADVANCE DISBURSEMENT FORM */}
-      {/* ========================================================================= */}
+      {/* Modal for Salary & Payment Form */}
       {isPaymentFormOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex justify-center items-center z-50 no-print">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-100 w-full max-w-md overflow-hidden">
-            <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="text-lg font-bold text-slate-800">
-                {editingPaymentId ? 'Edit Disbursement Slip' : 'Process Salary / Staff Advance'}
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-xl max-h-[92vh] flex flex-col overflow-hidden">
+            <div className="bg-slate-900 text-white p-4 flex items-center justify-between">
+              <h3 className="font-bold text-base">
+                {editingPaymentId ? `Edit Payment (#${editingPaymentId})` : 'Process Salary / Advance Payout'}
               </h3>
-              <button onClick={() => setIsPaymentFormOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold">✕</button>
+              <button onClick={() => setIsPaymentFormOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
             </div>
-            
-            <form onSubmit={handleSavePayment} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Select Employee</label>
-                  <SearchableSelect
-                    options={staff.map(s => ({
-                      value: s.id,
-                      label: s.name,
-                      subLabel: `${s.designation || 'Staff'} • ${s.phone || 'No phone'}`,
-                      badge: `Salary: Rs. ${s.basicSalary.toLocaleString()}`,
-                      badgeColor: 'indigo',
-                      searchTerms: `${s.name} ${s.id} ${s.designation || ''} ${s.phone || ''}`,
-                    }))}
-                    value={payStaffId}
-                    onChange={val => handleStaffSelect(val)}
-                    placeholder="-- Select / Search Employee --"
-                    required
-                  />
-                </div>
 
+            <form onSubmit={handleSavePayment} className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Tx Date</label>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Date *</label>
                   <input
                     type="date"
                     required
                     value={payDate}
                     onChange={e => setPayDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold"
                   />
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Transaction Type</label>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Payment Type *</label>
                   <select
                     value={payType}
                     onChange={e => setPayType(e.target.value as any)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-bold"
                   >
                     <option value="salary">Monthly Salary</option>
-                    <option value="advance">Salary Advance</option>
+                    <option value="advance">Staff Advance</option>
                     <option value="loan">Staff Loan</option>
                     <option value="settlement">Final Settlement</option>
                   </select>
                 </div>
+              </div>
 
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Select Employee *</label>
+                <SearchableSelect
+                  options={staff.map(s => ({
+                    value: s.id,
+                    label: s.name,
+                    subLabel: `Base Salary: Rs. ${s.basicSalary.toLocaleString()} • Advance: Rs. ${(balances?.staffBalances[s.id]?.advanceLoanBalance || 0).toLocaleString()}`,
+                    searchTerms: `${s.name} ${s.phone || ''}`
+                  }))}
+                  value={payStaffId}
+                  onChange={val => {
+                    setPayStaffId(val);
+                    const s = staff.find(st => st.id === val);
+                    if (s && payType === 'salary') setPayAmount(s.basicSalary);
+                  }}
+                  placeholder="-- Select Employee --"
+                />
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                    {payType === 'salary' ? 'Gross Salary Amount' : 'Disbursed Amount'}
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    {payType === 'salary' ? 'Gross Salary (Rs.)' : 'Amount (Rs.)'} *
                   </label>
                   <input
                     type="number"
                     min="1"
                     required
-                    value={payAmount}
-                    onChange={e => setPayAmount(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                    value={payAmount === 0 ? '' : payAmount}
+                    onChange={e => setPayAmount(e.target.value === '' ? 0 : Number(e.target.value))}
+                    className="w-full px-3 py-2 border-2 border-indigo-300 rounded-lg text-base font-black text-indigo-900 bg-white"
                   />
                 </div>
-              </div>
 
-              {/* Show Advance Balance adjustment ONLY for Salary and Settlements */}
-              {(payType === 'salary' || payType === 'settlement') && (
-                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                {payType === 'salary' && (
                   <div>
-                    <p className="text-[10px] font-semibold text-slate-400 uppercase">Available Advance Bal</p>
-                    <p className="font-bold text-slate-700 text-sm mt-0.5">
-                      Rs. {(balances?.staffBalances[payStaffId]?.advanceLoanBalance || 0).toLocaleString()}
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-0.5">Advance to Deduct</label>
+                    <div className="flex justify-between text-xs font-bold mb-1">
+                      <span className="text-amber-800">Deduct Advance / Loan (Rs.)</span>
+                      <span className="text-slate-500">
+                        Max Advance: Rs. {(balances?.staffBalances[payStaffId]?.advanceLoanBalance || 0).toLocaleString()}
+                      </span>
+                    </div>
                     <input
                       type="number"
                       min="0"
-                      max={balances?.staffBalances[payStaffId]?.advanceLoanBalance || 0}
-                      value={payAdvanceAdjusted}
-                      onChange={e => setPayAdvanceAdjusted(Number(e.target.value))}
-                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs focus:outline-none focus:border-indigo-500"
+                      value={payAdvanceAdjusted === 0 ? '' : payAdvanceAdjusted}
+                      onChange={e => setPayAdvanceAdjusted(e.target.value === '' ? 0 : Number(e.target.value))}
+                      className="w-full px-3 py-2 border border-amber-300 rounded-lg text-xs font-semibold bg-white"
                     />
                   </div>
-                </div>
-              )}
+                )}
 
-              <div className="grid grid-cols-2 gap-4">
+                <div className="pt-2 border-t flex justify-between items-center text-sm">
+                  <span className="font-black text-slate-900">Net Cash/Bank Payout:</span>
+                  <span className="text-lg font-black text-emerald-700">
+                    Rs. {Math.max(0, payAmount - (payType === 'salary' ? payAdvanceAdjusted : 0)).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Disbursement Channel</label>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Payment Method</label>
                   <select
                     value={payMethod}
                     onChange={e => setPayMethod(e.target.value as any)}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
                   >
-                    <option value="Cash">Cash Payout</option>
-                    <option value="Bank">Bank Deposit</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Bank">Bank Transfer</option>
                   </select>
                 </div>
 
                 {payMethod === 'Bank' && (
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Source Bank</label>
+                    <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Bank Account</label>
                     <select
                       value={payBankId}
                       onChange={e => setPayBankId(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
                     >
                       {banks.map(b => (
-                        <option key={b.id} value={b.id}>{b.name}</option>
+                        <option key={b.id} value={b.id}>{b.name} ({b.accountNumber})</option>
                       ))}
                     </select>
                   </div>
@@ -1718,37 +1472,310 @@ export default function StaffManagement() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Description / Memo</label>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Description / Remarks</label>
                 <input
                   type="text"
+                  placeholder="e.g. Salary for Month of September 2026"
                   value={payDesc}
                   onChange={e => setPayDesc(e.target.value)}
-                  placeholder="e.g. Salary for September 2026"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
                 />
               </div>
 
-              <div className="pt-2 flex justify-between items-baseline font-bold border-t border-slate-100">
-                <span className="text-slate-700 text-sm">Net Cash Payout:</span>
-                <span className="text-lg text-indigo-600">Rs. {netPaidPreview.toLocaleString()}</span>
-              </div>
-
-              <div className="pt-4 flex justify-end space-x-2">
+              <div className="flex justify-end space-x-2 pt-3 border-t">
                 <button
                   type="button"
                   onClick={() => setIsPaymentFormOpen(false)}
-                  className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50"
+                  className="px-4 py-2 border rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold"
                 >
-                  {editingPaymentId ? 'Save Changes' : 'Confirm Payout'}
+                  Save &amp; Disburse
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for Issue Driver Advance */}
+      {isDriverAdvFormOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden">
+            <div className="bg-amber-600 text-white p-4 flex items-center justify-between">
+              <h3 className="font-bold text-base flex items-center space-x-2">
+                <Wallet className="h-5 w-5" />
+                <span>Issue Driver Route Advance (پیشگی رقم)</span>
+              </h3>
+              <button onClick={() => setIsDriverAdvFormOpen(false)} className="text-amber-200 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveDriverAdvance} className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={advDate}
+                    onChange={e => setAdvDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Select Driver *</label>
+                  <select
+                    value={advDriverId}
+                    onChange={e => setAdvDriverId(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-bold"
+                  >
+                    <option value="">-- Choose Driver --</option>
+                    {staff.map(s => (
+                      <option key={s.id} value={s.id}>{s.name} ({s.category || s.designation})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Vehicle (Optional)</label>
+                  <select
+                    value={advVehicleId}
+                    onChange={e => setAdvVehicleId(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                  >
+                    <option value="">-- None --</option>
+                    {vehicles.map(v => (
+                      <option key={v.id} value={v.id}>{v.number}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Advance Amount (Rs.) *</label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    placeholder="Rs."
+                    value={advAmount === 0 ? '' : advAmount}
+                    onChange={e => setAdvAmount(e.target.value === '' ? 0 : Number(e.target.value))}
+                    className="w-full px-3 py-2 border-2 border-amber-400 rounded-lg text-sm font-black text-amber-950 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Purpose / Route</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Fuel, Toll Tax & Food for Karachi-Winder trip"
+                  value={advPurpose}
+                  onChange={e => setAdvPurpose(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setIsDriverAdvFormOpen(false)}
+                  className="px-4 py-2 border rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold"
+                >
+                  Issue Advance
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for Driver Expense Settlement */}
+      {isDriverExpenseFormOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden">
+            <div className="bg-emerald-700 text-white p-4 flex items-center justify-between">
+              <h3 className="font-bold text-base flex items-center space-x-2">
+                <CheckCircle className="h-5 w-5" />
+                <span>Settle Driver Route Expenses (خرچہ واؤچر تصدیق)</span>
+              </h3>
+              <button onClick={() => setIsDriverExpenseFormOpen(false)} className="text-emerald-200 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveDriverExpense} className="p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={expDate}
+                    onChange={e => setExpDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Select Driver *</label>
+                  <select
+                    value={expDriverId}
+                    onChange={e => setExpDriverId(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-bold"
+                  >
+                    <option value="">-- Choose Driver --</option>
+                    {staff.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Expense Category</label>
+                  <select
+                    value={expCategory}
+                    onChange={e => setExpCategory(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
+                  >
+                    <option value="Diesel">Diesel / Fuel</option>
+                    <option value="Toll Tax">Toll Tax / Parchi</option>
+                    <option value="Kanta">Kanta / Weighbridge</option>
+                    <option value="Food">Food / Roti</option>
+                    <option value="Mistri / Repair">Mistri / Puncture</option>
+                    <option value="Other">Other Route Expense</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Claimed Amount (Rs.) *</label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    placeholder="Rs."
+                    value={expClaimed === 0 ? '' : expClaimed}
+                    onChange={e => {
+                      const val = e.target.value === '' ? 0 : Number(e.target.value);
+                      setExpClaimed(val);
+                      setExpApproved(val);
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 bg-emerald-50/60 p-3 rounded-xl border border-emerald-200">
+                <div>
+                  <label className="block text-xs font-bold text-emerald-950 uppercase mb-1">Approved Amount (Rs.)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={expApproved === 0 ? '' : expApproved}
+                    onChange={e => setExpApproved(e.target.value === '' ? 0 : Number(e.target.value))}
+                    className="w-full px-3 py-1.5 border border-emerald-300 rounded-lg text-xs font-black text-emerald-950 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-emerald-950 uppercase mb-1">Cash Returned by Driver</label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={expCashReturned === 0 ? '' : expCashReturned}
+                    onChange={e => setExpCashReturned(e.target.value === '' ? 0 : Number(e.target.value))}
+                    className="w-full px-3 py-1.5 border border-emerald-300 rounded-lg text-xs font-black text-emerald-950 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Remarks / Route Notes</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 5 Toll Receipts + Puncture Bill"
+                  value={expDesc}
+                  onChange={e => setExpDesc(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setIsDriverExpenseFormOpen(false)}
+                  className="px-4 py-2 border rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold"
+                >
+                  Approve &amp; Settle
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for Viewing CNIC Document */}
+      {viewCnicModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg p-5 space-y-4">
+            <div className="flex justify-between items-center border-b pb-2">
+              <h4 className="font-bold text-slate-900 text-sm">
+                CNIC Document: {viewCnicModal.staffName} ({viewCnicModal.cnic})
+              </h4>
+              <button onClick={() => setViewCnicModal(null)} className="text-slate-400 hover:text-slate-700">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex justify-center p-3 bg-slate-900/5 rounded-xl overflow-hidden min-h-[220px] items-center border border-slate-200">
+              {viewCnicModal.url.startsWith('http') || viewCnicModal.url.startsWith('data:') ? (
+                <img src={viewCnicModal.url} alt="CNIC Document" className="max-h-[420px] w-full object-contain rounded-lg shadow-sm" />
+              ) : (
+                <p className="text-xs text-slate-600 font-mono break-all">{viewCnicModal.url}</p>
+              )}
+            </div>
+            <div className="flex justify-between items-center pt-1">
+              {(viewCnicModal.url.startsWith('http') || viewCnicModal.url.startsWith('data:')) && (
+                <a
+                  href={viewCnicModal.url}
+                  download={`${viewCnicModal.staffName.replace(/\s+/g, '_')}_CNIC.jpg`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold transition border border-indigo-200"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download / Save
+                </a>
+              )}
+              <button
+                onClick={() => setViewCnicModal(null)}
+                className="ml-auto px-5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

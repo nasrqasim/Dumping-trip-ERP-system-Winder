@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { getAllRecords, putRecord, deleteRecord, DBVendor, DBLedgerEntry, DBBank, DBVoucher, DBPurchase, DBItem } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances, saveVoucherTransaction } from '../db/transactions';
 import { Truck, Phone, MapPin, FileText, Plus, Edit, Trash, Printer, Search, X } from 'lucide-react';
+import Pagination from './Pagination';
 
 interface VendorsProps {
   onNavigateToPurchase: (vendorId: string) => void;
@@ -17,6 +18,8 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
   const [vouchers, setVouchers] = useState<DBVoucher[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -378,6 +381,8 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
     );
   });
 
+  const paginatedVendors = filteredVendors.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   return (
     <div className="space-y-6">
       {/* List Page */}
@@ -430,7 +435,14 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
 
           <div className="print-a4 print-container space-y-4">
             <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
+              <div className="flex items-center justify-center space-x-3 mb-2">
+                <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+                <div>
+                  <h1 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h1>
+                  <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul & Son's (03458829298)</p>
+                  <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+                </div>
+              </div>
               <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
                 VENDORS & SUPPLIERS DIRECTORY
               </p>
@@ -457,7 +469,7 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {filteredVendors.map(vend => {
+                    {paginatedVendors.map(vend => {
                       const balInfo = balances?.vendorBalances[vend.id] || {
                         outstanding: 0,
                         advance: 0,
@@ -564,10 +576,18 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
                   )}
                 </table>
               </div>
+
+              <Pagination
+                currentPage={currentPage}
+                totalItems={filteredVendors.length}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+              />
             </div>
 
             <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-              Software by Roonjha Developer - 03152914836
+              Software by Roonjha Developers - 03152914836
             </div>
           </div>
         </div>
@@ -632,7 +652,14 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
           {/* Printable Report Header */}
           <div className="print-a4 print-container space-y-6">
             <div className="text-center pb-4 border-b-2 border-slate-300">
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
+              <div className="flex items-center justify-center space-x-3 mb-2">
+                <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+                <div>
+                  <h1 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h1>
+                  <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul & Son's (03458829298)</p>
+                  <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+                </div>
+              </div>
               <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
                 VENDOR LEDGER STATEMENT - {activeLedgerVendor.name} ({activeLedgerVendor.id.toUpperCase()})
               </p>
@@ -719,7 +746,7 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
             
             {/* Required Centered Footer on Printed Documents */}
             <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-              Software by Roonjha Developer - 03152914836
+              Software by Roonjha Developers - 03152914836
             </div>
           </div>
         </div>

@@ -85,12 +85,15 @@ body {
   }
 
   .print-receipt {
-    width: 80mm !important;
+    width: 78mm !important;
     max-width: 80mm !important;
     margin: 0 auto !important;
-    padding: 6px !important;
+    padding: 3mm 2mm !important;
     border: none !important;
-    font-size: 8pt !important;
+    font-size: 9.5pt !important;
+    line-height: 1.35 !important;
+    color: #000000 !important;
+    background: #ffffff !important;
   }
 
   .print-a4 {
@@ -127,7 +130,7 @@ body {
   /* Table cell padding & font size for clear, in-line print layouts */
   th, td {
     padding: 3px 5px !important;
-    font-size: 8pt !important;
+    font-size: 8.5pt !important;
     line-height: 1.25 !important;
     word-break: normal !important;
     overflow-wrap: normal !important;
@@ -164,9 +167,10 @@ body {
   /* Thermal Receipt Specific Sizing & Non-Breaking Table Values */
   .print-receipt table th,
   .print-receipt table td {
-    padding: 2px 2px !important;
-    font-size: 7.5pt !important;
-    line-height: 1.2 !important;
+    padding: 2.5px 2px !important;
+    font-size: 9pt !important;
+    line-height: 1.25 !important;
+    color: #000000 !important;
   }
 
   .print-receipt table th:not(:first-child),
@@ -189,12 +193,12 @@ body {
     display: block !important;
     width: 100% !important;
     text-align: center !important;
-    font-size: 8pt !important;
-    font-weight: 600 !important;
-    color: #4b5563 !important; /* gray-600 */
-    border-top: 1px dashed #9ca3af !important;
-    padding-top: 6px !important;
-    margin-top: 16px !important;
+    font-size: 8.5pt !important;
+    font-weight: 700 !important;
+    color: #000000 !important;
+    border-top: 1px dashed #000000 !important;
+    padding-top: 5px !important;
+    margin-top: 12px !important;
     background: white !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;

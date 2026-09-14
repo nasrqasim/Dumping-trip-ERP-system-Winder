@@ -1,8 +1,25 @@
 import React, { useEffect, useState } from 'react';
-import { getAllRecords, putRecord, deleteRecord, DBTrip, DBCustomer, DBItem, DBVehicle, DBBank, DBTripExpense, DBTripItem } from '../db/firestore';
+import { 
+  getAllRecords, 
+  putRecord, 
+  deleteRecord, 
+  DBTrip, 
+  DBCustomer, 
+  DBItem, 
+  DBVehicle, 
+  DBBank, 
+  DBTripExpense, 
+  DBTripItem,
+  DBStaff
+} from '../db/firestore';
 import { calculateLiveBalances, LiveBalances, saveTripTransaction, deleteTripTransaction } from '../db/transactions';
-import { Truck, Plus, Trash, Edit, ArrowRight, Printer, AlertTriangle, Download, Search, X, FileText, UserCheck, Wallet, ShieldAlert } from 'lucide-react';
+import { 
+  Truck, Plus, Trash, Edit, ArrowRight, Printer, AlertTriangle, Download, 
+  Search, X, FileText, UserCheck, Wallet, ShieldAlert, Calendar, Clock, 
+  MapPin, Gauge, Timer, CheckCircle, Navigation, Layers, Info
+} from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
+import Pagination from './Pagination';
 
 interface FormTripItem {
   id: string;
@@ -13,15 +30,58 @@ interface FormTripItem {
   amount: number;
 }
 
+// Utility to calculate duration between two time/datetime strings
+function calculateHoursBetween(startStr: string, endStr: string): number {
+  if (!startStr || !endStr) return 0;
+  try {
+    let s: Date;
+    let e: Date;
+    if (startStr.includes('T')) {
+      s = new Date(startStr);
+    } else {
+      s = new Date(`2000-01-01T${startStr}`);
+    }
+
+    if (endStr.includes('T')) {
+      e = new Date(endStr);
+    } else {
+      e = new Date(`2000-01-01T${endStr}`);
+    }
+
+    if (e.getTime() < s.getTime()) {
+      // past midnight case
+      e = new Date(e.getTime() + 24 * 60 * 60 * 1000);
+    }
+
+    const diffHours = (e.getTime() - s.getTime()) / (1000 * 60 * 60);
+    return Math.max(0, parseFloat(diffHours.toFixed(2)));
+  } catch {
+    return 0;
+  }
+}
+
+function getNowTimeStr(): string {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
 export default function TripEntry() {
   const [trips, setTrips] = useState<DBTrip[]>([]);
   const [customers, setCustomers] = useState<DBCustomer[]>([]);
   const [items, setItems] = useState<DBItem[]>([]);
   const [vehicles, setVehicles] = useState<DBVehicle[]>([]);
+  const [staffList, setStaffList] = useState<DBStaff[]>([]);
   const [banks, setBanks] = useState<DBBank[]>([]);
   const [balances, setBalances] = useState<LiveBalances | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [billingFilter, setBillingFilter] = useState<'all' | 'fixed' | 'hourly'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   // Form State
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -30,10 +90,27 @@ export default function TripEntry() {
 
   // Form Field States
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [billingType, setBillingType] = useState<'fixed' | 'hourly'>('fixed');
+  const [tripStatus, setTripStatus] = useState<'active' | 'completed' | 'cancelled'>('completed');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [vehicleId, setVehicleId] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
   const [driverName, setDriverName] = useState('');
+  const [driverCnic, setDriverCnic] = useState('');
+  const [driverPhone, setDriverPhone] = useState('');
   const [customerId, setCustomerId] = useState('walk-in');
+  
+  // Hourly Rental fields
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [totalHours, setTotalHours] = useState<number>(0);
+  const [hourlyRate, setHourlyRate] = useState<number>(0);
+  const [odometerStart, setOdometerStart] = useState<number | ''>('');
+  const [odometerEnd, setOdometerEnd] = useState<number | ''>('');
+  const [hoursStart, setHoursStart] = useState<number | ''>('');
+  const [hoursEnd, setHoursEnd] = useState<number | ''>('');
+
+  // Trip Items (Dispatched Materials)
   const [tripItems, setTripItems] = useState<FormTripItem[]>([
     { id: 'item-1', itemId: '', quantity: 0, unit: 'Ton', rate: 0, amount: 0 }
   ]);
@@ -75,19 +152,22 @@ export default function TripEntry() {
       }
       setCustomers(allCustomers);
 
-      const allItems = await getAllRecords<DBItem>('items');
+      const [allItems, allVehicles, allStaff, allBanks, allTrips] = await Promise.all([
+        getAllRecords<DBItem>('items'),
+        getAllRecords<DBVehicle>('vehicles'),
+        getAllRecords<DBStaff>('staff'),
+        getAllRecords<DBBank>('banks'),
+        getAllRecords<DBTrip>('trips')
+      ]);
+
       setItems(allItems);
-
-      const allVehicles = await getAllRecords<DBVehicle>('vehicles');
       setVehicles(allVehicles);
-
-      const allBanks = await getAllRecords<DBBank>('banks');
+      setStaffList(allStaff);
       setBanks(allBanks);
       if (allBanks.length > 0 && !bankId) {
         setBankId(allBanks[0].id);
       }
 
-      const allTrips = await getAllRecords<DBTrip>('trips');
       allTrips.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setTrips(allTrips);
 
@@ -96,7 +176,7 @@ export default function TripEntry() {
 
       setLoading(false);
     } catch (err) {
-      console.error(err);
+      console.error('Error loading trip data:', err);
     }
   };
 
@@ -104,15 +184,76 @@ export default function TripEntry() {
     loadData();
   }, []);
 
-  // Update driver name based on vehicle selection (do NOT touch quantity or vehicle charges)
-  useEffect(() => {
-    if (vehicleId) {
-      const selectedVeh = vehicles.find(v => v.id === vehicleId);
-      if (selectedVeh) {
-        setDriverName(selectedVeh.driver || '');
+  // Handle vehicle selection logic
+  const handleSelectVehicle = (vId: string) => {
+    setVehicleId(vId);
+    if (!vId) return;
+
+    const selectedVeh = vehicles.find(v => v.id === vId);
+    if (selectedVeh) {
+      if (selectedVeh.driver) setDriverName(selectedVeh.driver);
+      if (selectedVeh.driverCnic) setDriverCnic(selectedVeh.driverCnic);
+      if (selectedVeh.driverPhone) setDriverPhone(selectedVeh.driverPhone);
+      if (selectedVeh.model || selectedVeh.make) {
+        setVehicleModel(`${selectedVeh.make || ''} ${selectedVeh.model || ''}`.trim());
+      }
+      if (selectedVeh.currentOdometer !== undefined) {
+        setOdometerStart(selectedVeh.currentOdometer);
+      }
+      if (selectedVeh.currentEngineHours !== undefined) {
+        setHoursStart(selectedVeh.currentEngineHours);
+      }
+
+      // If vehicle operates on hourly basis, auto-suggest hourly billing mode
+      if (selectedVeh.category === 'hours' || selectedVeh.measurement === 'hours') {
+        setBillingType('hourly');
+        if (selectedVeh.hourlyRate) {
+          setHourlyRate(selectedVeh.hourlyRate);
+          if (totalHours > 0) {
+            setVehicleCharges(Math.round(totalHours * selectedVeh.hourlyRate));
+          }
+        }
+      } else if (selectedVeh.category === 'trips' && selectedVeh.perTripRate) {
+        setVehicleCharges(selectedVeh.perTripRate);
+      }
+
+      // Look up driver in staff if not already set
+      if (selectedVeh.driver && (!selectedVeh.driverCnic || !selectedVeh.driverPhone)) {
+        const staff = staffList.find(s => s.name.toLowerCase() === selectedVeh.driver.toLowerCase());
+        if (staff) {
+          if (!driverCnic && staff.cnic) setDriverCnic(staff.cnic);
+          if (!driverPhone && staff.phone) setDriverPhone(staff.phone);
+        }
       }
     }
-  }, [vehicleId, vehicles]);
+  };
+
+  // Auto-calculate total hours and rent when start/end times change
+  const handleTimeChange = (newStart: string, newEnd: string) => {
+    setStartTime(newStart);
+    setEndTime(newEnd);
+    if (newStart && newEnd) {
+      const calcHours = calculateHoursBetween(newStart, newEnd);
+      setTotalHours(calcHours);
+      if (hourlyRate > 0) {
+        setVehicleCharges(Math.round(calcHours * hourlyRate));
+      }
+    }
+  };
+
+  const handleHourlyRateChange = (rate: number) => {
+    setHourlyRate(rate);
+    if (totalHours > 0) {
+      setVehicleCharges(Math.round(totalHours * rate));
+    }
+  };
+
+  const handleTotalHoursChange = (hrs: number) => {
+    setTotalHours(hrs);
+    if (hourlyRate > 0) {
+      setVehicleCharges(Math.round(hrs * hourlyRate));
+    }
+  };
 
   const handleAddItemRow = () => {
     setTripItems(prev => [
@@ -134,7 +275,7 @@ export default function TripEntry() {
     const amount = qty * rate;
 
     setTripItems(prev => {
-      // If the first row is empty, replace it
+      // If the only row is empty, replace it
       if (prev.length === 1 && !prev[0].itemId) {
         return [{ id: 'item-1', itemId: quickItemId, quantity: qty, unit, rate, amount }];
       }
@@ -144,7 +285,6 @@ export default function TripEntry() {
       ];
     });
 
-    // Reset quick inputs
     setQuickItemId('');
     setQuickQty(0);
     setQuickRate(0);
@@ -190,10 +330,24 @@ export default function TripEntry() {
   const handleOpenForm = (trip?: DBTrip) => {
     if (trip) {
       setEditingId(trip.id);
+      setBillingType(trip.billingType || (trip.totalHours ? 'hourly' : 'fixed'));
+      setTripStatus(trip.tripStatus || 'completed');
       setDate(trip.date);
       setVehicleId(trip.vehicleId || '');
+      setVehicleModel(trip.vehicleModel || '');
       setDriverName(trip.driverName || '');
+      setDriverCnic(trip.driverCnic || '');
+      setDriverPhone(trip.driverPhone || '');
       setCustomerId(trip.customerId || 'walk-in');
+      setStartTime(trip.startTime || '');
+      setEndTime(trip.endTime || '');
+      setTotalHours(trip.totalHours || 0);
+      setHourlyRate(trip.hourlyRate || 0);
+      setOdometerStart(trip.odometerStart !== undefined ? trip.odometerStart : '');
+      setOdometerEnd(trip.odometerEnd !== undefined ? trip.odometerEnd : '');
+      setHoursStart(trip.hoursStart !== undefined ? trip.hoursStart : '');
+      setHoursEnd(trip.hoursEnd !== undefined ? trip.hoursEnd : '');
+
       if (trip.items && trip.items.length > 0) {
         setTripItems(trip.items.map((it, idx) => ({
           id: `item-${idx + 1}-${Date.now()}`,
@@ -215,6 +369,7 @@ export default function TripEntry() {
       } else {
         setTripItems([{ id: 'item-1', itemId: '', quantity: 0, unit: 'Ton', rate: 0, amount: 0 }]);
       }
+
       setVehicleCharges(trip.vehicleCharges || 0);
       setDiscount(trip.discount || 0);
       setPaymentType(trip.paymentType || 'Cash');
@@ -226,10 +381,23 @@ export default function TripEntry() {
       setExpenses(trip.expenses || []);
     } else {
       setEditingId(null);
+      setBillingType('fixed');
+      setTripStatus('completed');
       setDate(new Date().toISOString().split('T')[0]);
       setCustomerId('walk-in');
       setVehicleId('');
+      setVehicleModel('');
       setDriverName('');
+      setDriverCnic('');
+      setDriverPhone('');
+      setStartTime('');
+      setEndTime('');
+      setTotalHours(0);
+      setHourlyRate(0);
+      setOdometerStart('');
+      setOdometerEnd('');
+      setHoursStart('');
+      setHoursEnd('');
       setTripItems([{ id: 'item-1', itemId: '', quantity: 0, unit: 'Ton', rate: 0, amount: 0 }]);
       setVehicleCharges(0);
       setDiscount(0);
@@ -267,11 +435,55 @@ export default function TripEntry() {
     setExpenses(next);
   };
 
+  // Calculations
+  const validItems = tripItems.filter(i => i.itemId && i.quantity > 0);
+  const materialTotal = validItems.reduce((sum, itm) => sum + itm.amount, 0);
+  const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+  const grossTotal = materialTotal + vehicleCharges + totalExpenses;
+  const grandTotal = Math.max(0, grossTotal - discount);
+  const netTripProfit = vehicleCharges - totalExpenses;
+
+  // Selected customer balance logic
+  const selectedCust = customers.find(c => c.id === customerId);
+  const custBalInfo = balances?.customerBalances[customerId] || { outstanding: 0, advance: 0, netBalance: 0 };
+  const currentAdvance = custBalInfo.advance || 0;
+  const currentOutstanding = custBalInfo.outstanding || 0;
+
+  let projectedAdvance = 0;
+  let projectedOutstanding = 0;
+  if (paidAmount < grandTotal) {
+    const shortfall = grandTotal - paidAmount;
+    if (currentAdvance > 0) {
+      if (shortfall <= currentAdvance) {
+        projectedAdvance = currentAdvance - shortfall;
+        projectedOutstanding = 0;
+      } else {
+        projectedAdvance = 0;
+        projectedOutstanding = currentOutstanding + (shortfall - currentAdvance);
+      }
+    } else {
+      projectedOutstanding = currentOutstanding + shortfall;
+    }
+  } else {
+    const excess = paidAmount - grandTotal;
+    if (currentOutstanding > 0) {
+      if (excess <= currentOutstanding) {
+        projectedOutstanding = currentOutstanding - excess;
+        projectedAdvance = 0;
+      } else {
+        projectedOutstanding = 0;
+        projectedAdvance = currentAdvance + (excess - currentOutstanding);
+      }
+    } else {
+      projectedAdvance = currentAdvance + excess;
+    }
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    const validItems = tripItems.filter(i => i.itemId && i.quantity > 0);
-    if (validItems.length === 0) {
-      alert('Please add at least one material item and enter a quantity greater than 0.');
+
+    if (validItems.length === 0 && vehicleCharges <= 0) {
+      alert('Please either add dispatched material items or enter vehicle freight / hourly rental charges.');
       return;
     }
 
@@ -281,11 +493,6 @@ export default function TripEntry() {
       alert('Credit payment requires selecting a registered customer account. For walk-in customers, please select Cash or Bank.');
       return;
     }
-
-    const mTotal = validItems.reduce((sum, itm) => sum + itm.amount, 0);
-    const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-    const grandTotal = mTotal + vehicleCharges + totalExpenses - discount;
-    const netTripProfit = vehicleCharges - totalExpenses;
 
     if (paymentType === 'Credit' && effectiveCustomerId !== 'walk-in' && balances) {
       const cust = customers.find(c => c.id === effectiveCustomerId);
@@ -312,15 +519,28 @@ export default function TripEntry() {
       tripId = `${prefix}${String(nextNum).padStart(3, '0')}`;
     }
 
-    const primaryItem = validItems[0];
+    const primaryItem = validItems.length > 0 ? validItems[0] : null;
     const totalQty = validItems.reduce((sum, itm) => sum + itm.quantity, 0);
 
     const trip: DBTrip = {
       id: tripId,
       date,
+      billingType,
+      tripStatus,
       vehicleId: vehicleId.trim() || '',
+      vehicleModel: vehicleModel.trim() || '',
       driverName: driverName.trim() || '',
+      driverCnic: driverCnic.trim() || '',
+      driverPhone: driverPhone.trim() || '',
       customerId: effectiveCustomerId,
+      startTime: startTime || undefined,
+      endTime: endTime || undefined,
+      totalHours: totalHours > 0 ? totalHours : undefined,
+      hourlyRate: hourlyRate > 0 ? hourlyRate : undefined,
+      odometerStart: odometerStart !== '' ? Number(odometerStart) : undefined,
+      odometerEnd: odometerEnd !== '' ? Number(odometerEnd) : undefined,
+      hoursStart: hoursStart !== '' ? Number(hoursStart) : undefined,
+      hoursEnd: hoursEnd !== '' ? Number(hoursEnd) : undefined,
       items: validItems.map(i => ({
         itemId: i.itemId,
         itemName: items.find(it => it.id === i.itemId)?.name || i.itemId,
@@ -329,11 +549,11 @@ export default function TripEntry() {
         rate: Number(i.rate) || 0,
         amount: Number(i.amount) || 0,
       })),
-      itemId: primaryItem.itemId,
+      itemId: primaryItem ? primaryItem.itemId : '',
       quantity: Number(totalQty) || 0,
-      unit: primaryItem.unit,
-      rate: Number(primaryItem.rate) || 0,
-      materialTotal: Number(mTotal) || 0,
+      unit: primaryItem ? primaryItem.unit : 'Ton',
+      rate: primaryItem ? Number(primaryItem.rate) || 0 : 0,
+      materialTotal: Number(materialTotal) || 0,
       vehicleCharges: Number(vehicleCharges) || 0,
       discount: Number(discount) || 0,
       grandTotal: Number(grandTotal) || 0,
@@ -356,7 +576,7 @@ export default function TripEntry() {
       await saveTripTransaction(trip);
       setIsFormOpen(false);
       await loadData();
-      if (confirm('Print Receipt?\nSale/Dispatch has been completed successfully.')) {
+      if (confirm('Print Receipt?\nDispatch / Rental voucher created successfully.')) {
         setActivePrintJob({ type: 'thermal', data: trip });
         setTimeout(() => {
           window.print();
@@ -384,6 +604,14 @@ export default function TripEntry() {
     }, 150);
   };
 
+  const handlePrintA4 = (trip: DBTrip) => {
+    setActivePrintJob({ type: 'a4', data: trip });
+    setTimeout(() => {
+      window.print();
+      setActivePrintJob(null);
+    }, 150);
+  };
+
   const handlePrintAllTripsLedger = () => {
     setActivePrintJob(null);
     setTimeout(() => {
@@ -392,117 +620,77 @@ export default function TripEntry() {
   };
 
   const handleDownloadTripsCSV = () => {
-    if (trips.length === 0) {
-      alert('No trips recorded to download.');
+    if (filteredTrips.length === 0) {
+      alert('No trips found for the selected filter to download.');
       return;
     }
 
     const headers = [
       'Trip ID',
       'Date',
+      'Billing Type',
+      'Status',
       'Vehicle Number',
+      'Vehicle Model',
       'Driver Name',
+      'Driver Phone',
       'Customer Name',
-      'Material',
-      'Quantity',
-      'Unit',
-      'Rate (PKR)',
+      'Start Time',
+      'End Time',
+      'Total Hours',
+      'Hourly Rate',
       'Material Total (PKR)',
-      'Vehicle Charges (PKR)',
-      'Total Expenses (PKR)',
+      'Vehicle Freight / Rent (PKR)',
+      'Trip Expenses (PKR)',
       'Discount (PKR)',
       'Net Profit (PKR)',
       'Grand Total (PKR)',
+      'Paid Amount (PKR)',
       'Payment Type',
       'From Location',
       'Destination'
     ];
 
-    const rows = trips.map(t => {
+    const rows = filteredTrips.map(t => {
       const cust = customers.find(c => c.id === t.customerId)?.name || t.customerId;
-      const item = items.find(i => i.id === t.itemId)?.name || t.itemId;
       const veh = vehicles.find(v => v.id === t.vehicleId)?.number || t.vehicleId;
       return [
         `"${t.id}"`,
         `"${t.date}"`,
+        `"${t.billingType || 'fixed'}"`,
+        `"${t.tripStatus || 'completed'}"`,
         `"${veh}"`,
-        `"${t.driverName}"`,
+        `"${t.vehicleModel || ''}"`,
+        `"${t.driverName || ''}"`,
+        `"${t.driverPhone || ''}"`,
         `"${cust}"`,
-        `"${item}"`,
-        t.quantity,
-        `"${t.unit}"`,
-        t.rate,
-        t.materialTotal,
-        t.vehicleCharges,
-        t.totalExpenses,
-        t.discount,
-        t.netTripProfit,
-        t.grandTotal,
+        `"${t.startTime || ''}"`,
+        `"${t.endTime || ''}"`,
+        t.totalHours || 0,
+        t.hourlyRate || 0,
+        t.materialTotal || 0,
+        t.vehicleCharges || 0,
+        t.totalExpenses || 0,
+        t.discount || 0,
+        t.netTripProfit || 0,
+        t.grandTotal || 0,
+        t.paidAmount || 0,
         `"${t.paymentType}"`,
         `"${t.from || ''}"`,
         `"${t.to || ''}"`
       ].join(',');
     });
 
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Norani_Kanta_Trips_Export_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `trips_and_rentals_${startDate || 'all'}_to_${endDate || 'latest'}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const materialTotal = tripItems.reduce((sum, itm) => sum + (Number(itm.amount) || 0), 0);
-  const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-  const grandTotal = materialTotal + vehicleCharges + totalExpenses - discount;
-  const netTripProfit = vehicleCharges - totalExpenses;
-
-  // Live Customer Balances & Interactive Credit/Advance Projection
-  const selectedCust = customers.find(c => c.id === customerId);
-  const custBalInfo = (customerId && balances?.customerBalances[customerId])
-    ? balances.customerBalances[customerId]
-    : { outstanding: 0, advance: 0, netBalance: 0 };
-  const currentOutstanding = custBalInfo.outstanding || 0;
-  const currentAdvance = custBalInfo.advance || 0;
-
-  const effectivePaid = Number(paidAmount) || 0;
-  const unpaidBalance = grandTotal - effectivePaid;
-
-  let projectedAdvance = currentAdvance;
-  let projectedOutstanding = currentOutstanding;
-
-  if (unpaidBalance > 0) {
-    // Customer owes money (credit / using advance)
-    if (currentAdvance > 0) {
-      if (unpaidBalance <= currentAdvance) {
-        projectedAdvance = currentAdvance - unpaidBalance;
-        projectedOutstanding = 0;
-      } else {
-        projectedAdvance = 0;
-        projectedOutstanding = currentOutstanding + (unpaidBalance - currentAdvance);
-      }
-    } else {
-      projectedOutstanding = currentOutstanding + unpaidBalance;
-    }
-  } else if (unpaidBalance < 0) {
-    // Customer overpaid! Extra money goes to advance
-    const excess = effectivePaid - grandTotal;
-    if (currentOutstanding > 0) {
-      if (excess <= currentOutstanding) {
-        projectedOutstanding = currentOutstanding - excess;
-        projectedAdvance = 0;
-      } else {
-        projectedOutstanding = 0;
-        projectedAdvance = currentAdvance + (excess - currentOutstanding);
-      }
-    } else {
-      projectedAdvance = currentAdvance + excess;
-    }
-  }
-
-  // Correct expense categories list in English
   const categoriesList = [
     'Diesel',
     'Food',
@@ -518,6 +706,15 @@ export default function TripEntry() {
 
   const cleanSearch = searchQuery.toLowerCase().trim();
   const filteredTrips = trips.filter(t => {
+    // Date filter
+    if (startDate && t.date < startDate) return false;
+    if (endDate && t.date > endDate) return false;
+
+    // Billing filter
+    if (billingFilter === 'hourly' && t.billingType !== 'hourly') return false;
+    if (billingFilter === 'fixed' && t.billingType === 'hourly') return false;
+
+    // Search query filter
     if (!cleanSearch) return true;
     const cust = customers.find(c => c.id === t.customerId);
     const item = items.find(i => i.id === t.itemId);
@@ -525,7 +722,8 @@ export default function TripEntry() {
     return (
       t.id.toLowerCase().includes(cleanSearch) ||
       t.date.includes(cleanSearch) ||
-      t.driverName.toLowerCase().includes(cleanSearch) ||
+      (t.driverName && t.driverName.toLowerCase().includes(cleanSearch)) ||
+      (t.driverPhone && t.driverPhone.toLowerCase().includes(cleanSearch)) ||
       (t.from && t.from.toLowerCase().includes(cleanSearch)) ||
       (t.to && t.to.toLowerCase().includes(cleanSearch)) ||
       t.paymentType.toLowerCase().includes(cleanSearch) ||
@@ -535,56 +733,96 @@ export default function TripEntry() {
     );
   });
 
+  const paginatedTrips = filteredTrips.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   if (loading) {
-    return <div className="text-center py-6">Loading trips ledger...</div>;
+    return <div className="text-center py-10 font-bold text-slate-500">Loading trips and vehicle rentals ledger...</div>;
   }
 
   return (
     <div className="space-y-6">
-      {/* Print Job Engine (Only visible during window.print) */}
+      {/* Thermal (80mm) Print Receipt Layout */}
       {activePrintJob && activePrintJob.type === 'thermal' && (
-        <div className="print-only print-receipt p-6 bg-white border border-slate-200 text-xs rounded">
-          <div className="text-center border-b border-slate-200 pb-3 mb-3 font-mono">
-            <h2 className="text-xl font-bold text-slate-800">NORANI KANTA ERP</h2>
-            <p className="text-xs text-slate-500">Material Dispatch & Transport Ticket</p>
-            <p className="text-[10px] text-slate-400 mt-0.5">Ticket #: {activePrintJob.data.id.substring(5, 12)}</p>
+        <div className="print-only print-receipt p-2 bg-white text-black font-mono">
+          <div className="text-center border-b-2 border-dashed border-black pb-2 mb-2">
+            <div className="flex justify-center mb-1">
+              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain mx-auto" />
+            </div>
+            <h2 className="text-sm font-black uppercase tracking-tight text-black">AL-MADINA CONSTRUCTION COMPANY</h2>
+            <p className="text-[11px] font-bold text-black mt-0.5">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+            <p className="text-[10px] font-semibold text-black">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WA)</p>
+            <div className="border-t border-dashed border-black my-1.5"></div>
+            <p className="text-xs font-black uppercase tracking-wider text-black">
+              {activePrintJob.data.billingType === 'hourly' ? 'VEHICLE HOURLY RENTAL SLIP (فی گھنٹہ کرایہ)' : 'MATERIAL DISPATCH & TRANSPORT SLIP'}
+            </p>
+            <div className="flex justify-between text-xs font-bold text-black mt-1">
+              <span>Slip #: {activePrintJob.data.id}</span>
+              <span>Date: {activePrintJob.data.date}</span>
+            </div>
           </div>
 
-          <div className="space-y-2 text-xs font-mono">
+          <div className="space-y-1 text-xs font-mono text-black border-b border-dashed border-black pb-2 mb-2">
             <div className="flex justify-between">
-              <span className="text-slate-500">Trip No:</span>
-              <span className="font-bold">{activePrintJob.data.id}</span>
+              <span className="font-semibold">Vehicle No:</span>
+              <span className="font-bold">
+                {vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.number || (activePrintJob.data.vehicleId ? activePrintJob.data.vehicleId : 'Direct / Machine')}
+                {activePrintJob.data.vehicleModel ? ` (${activePrintJob.data.vehicleModel})` : ''}
+              </span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">Date:</span>
-              <span className="font-bold">{activePrintJob.data.date}</span>
+              <span className="font-semibold">Driver:</span>
+              <span className="font-bold">{activePrintJob.data.driverName || '—'} {activePrintJob.data.driverPhone ? `• ${activePrintJob.data.driverPhone}` : ''}</span>
             </div>
+            {activePrintJob.data.driverCnic && (
+              <div className="flex justify-between text-[11px]">
+                <span>Driver CNIC:</span>
+                <span className="font-bold">{activePrintJob.data.driverCnic}</span>
+              </div>
+            )}
             <div className="flex justify-between">
-              <span className="text-slate-500">Vehicle:</span>
-              <span className="font-bold">{vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.number || (activePrintJob.data.vehicleId ? activePrintJob.data.vehicleId : 'Direct / None')}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Driver:</span>
-              <span className="font-bold">{activePrintJob.data.driverName || '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Customer:</span>
+              <span className="font-semibold">Customer:</span>
               <span className="font-bold">{customers.find(c => c.id === activePrintJob.data.customerId)?.name || (activePrintJob.data.customerId === 'walk-in' ? 'Walk-in Customer' : activePrintJob.data.customerId)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">From Location:</span>
-              <span className="font-bold">{activePrintJob.data.from || '—'}</span>
+              <span className="font-semibold">Route / Site:</span>
+              <span className="font-bold">{activePrintJob.data.from || 'Base'} ➔ {activePrintJob.data.to || 'Site'}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Destination:</span>
-              <span className="font-bold">{activePrintJob.data.to || '—'}</span>
+          </div>
+
+          {/* Hourly Rental Breakdown if applicable */}
+          {activePrintJob.data.billingType === 'hourly' && (
+            <div className="my-2 border-b border-dashed border-black pb-2 font-mono text-xs text-black space-y-1 bg-slate-50 p-1.5 rounded">
+              <div className="font-bold uppercase text-[11px] border-b border-dashed border-black pb-0.5">Rental Duration &amp; Meter Readings</div>
+              <div className="flex justify-between">
+                <span>Start Time (روانگی):</span>
+                <span className="font-bold">{activePrintJob.data.startTime || '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Return Time (واپسی):</span>
+                <span className="font-bold">{activePrintJob.data.endTime || '—'}</span>
+              </div>
+              <div className="flex justify-between font-bold border-t border-dotted border-black pt-0.5">
+                <span>Total Hours (کل گھنٹے):</span>
+                <span className="font-black text-sm">{activePrintJob.data.totalHours || 0} Hours</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Hourly Rate (فی گھنٹہ ریٹ):</span>
+                <span className="font-bold">Rs. {(activePrintJob.data.hourlyRate || 0).toLocaleString()} / Hr</span>
+              </div>
+              {(activePrintJob.data.odometerStart !== undefined || activePrintJob.data.odometerEnd !== undefined) && (
+                <div className="flex justify-between text-[11px] pt-0.5 border-t border-dotted border-slate-300">
+                  <span>Odometer:</span>
+                  <span>{activePrintJob.data.odometerStart ?? '—'} km ➔ {activePrintJob.data.odometerEnd ?? '—'} km</span>
+                </div>
+              )}
             </div>
-            
-            <hr className="border-slate-300 my-2" />
-            
-            <table className="w-full text-left border-collapse my-2 font-mono text-[10px]">
+          )}
+
+          {/* Dispatched Materials Table (if any) */}
+          {activePrintJob.data.items && activePrintJob.data.items.length > 0 && activePrintJob.data.items.some(i => i.quantity > 0) && (
+            <table className="w-full text-left border-collapse my-2 font-mono text-xs text-black">
               <thead>
-                <tr className="border-b-2 border-dashed border-slate-400 font-bold uppercase text-slate-800">
+                <tr className="border-b-2 border-dashed border-black font-bold uppercase">
                   <th className="py-1 text-left">Item</th>
                   <th className="py-1 text-right whitespace-nowrap">Qty</th>
                   <th className="py-1 text-center whitespace-nowrap">Unit</th>
@@ -592,78 +830,106 @@ export default function TripEntry() {
                   <th className="py-1 text-right whitespace-nowrap">Amount</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-dashed divide-slate-200">
-                {activePrintJob.data.items && activePrintJob.data.items.length > 0 ? (
-                  activePrintJob.data.items.map((it, idx) => (
-                    <tr key={idx}>
-                      <td className="py-1 font-semibold text-slate-800 max-w-[85px] break-words">
-                        {it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}
-                      </td>
-                      <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">{it.quantity}</td>
-                      <td className="py-1 text-center text-slate-600 whitespace-nowrap">{it.unit}</td>
-                      <td className="py-1 text-right text-slate-600 whitespace-nowrap">Rs. {it.rate.toLocaleString()}</td>
-                      <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">Rs. {it.amount.toLocaleString()}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="py-1 font-semibold text-slate-800 max-w-[85px] break-words">
-                      {items.find(i => i.id === activePrintJob.data.itemId)?.name || activePrintJob.data.itemId}
+              <tbody className="divide-y divide-dashed divide-slate-300">
+                {activePrintJob.data.items.map((it, idx) => (
+                  <tr key={idx}>
+                    <td className="py-1 font-bold max-w-[85px] break-words">
+                      {it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}
                     </td>
-                    <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">{activePrintJob.data.quantity}</td>
-                    <td className="py-1 text-center text-slate-600 whitespace-nowrap">{activePrintJob.data.unit}</td>
-                    <td className="py-1 text-right text-slate-600 whitespace-nowrap">Rs. {activePrintJob.data.rate.toLocaleString()}</td>
-                    <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">Rs. {activePrintJob.data.materialTotal.toLocaleString()}</td>
+                    <td className="py-1 text-right font-bold whitespace-nowrap">{it.quantity}</td>
+                    <td className="py-1 text-center font-semibold whitespace-nowrap">{it.unit}</td>
+                    <td className="py-1 text-right font-semibold whitespace-nowrap">Rs. {it.rate.toLocaleString()}</td>
+                    <td className="py-1 text-right font-black whitespace-nowrap">Rs. {it.amount.toLocaleString()}</td>
                   </tr>
-                )}
+                ))}
               </tbody>
               <tfoot>
-                <tr className="border-t-2 border-dashed border-slate-400 font-bold">
+                <tr className="border-t-2 border-dashed border-black font-bold">
                   <td colSpan={3} className="py-1 text-left">
-                    Total Items: {activePrintJob.data.items && activePrintJob.data.items.length > 0 ? activePrintJob.data.items.length : 1}
+                    Total Items: {activePrintJob.data.items.length}
                   </td>
-                  <td className="py-1 text-right">Mat Total:</td>
+                  <td className="py-1 text-right font-bold">Mat Total:</td>
                   <td className="py-1 text-right font-black">Rs. {activePrintJob.data.materialTotal.toLocaleString()}</td>
                 </tr>
               </tfoot>
             </table>
+          )}
+
+          {/* Itemized Trip Expenses Breakdown */}
+          {activePrintJob.data.expenses && activePrintJob.data.expenses.length > 0 && (
+            <div className="my-2 border-t border-b border-dashed border-black py-1.5 font-mono text-black">
+              <div className="flex justify-between items-center font-black text-xs uppercase mb-1">
+                <span>Trip Expenses &amp; Toll:</span>
+                <span>Rs. {activePrintJob.data.totalExpenses.toLocaleString()}</span>
+              </div>
+              <table className="w-full text-left border-collapse text-[11px]">
+                <thead>
+                  <tr className="border-b border-dashed border-slate-300 font-bold uppercase">
+                    <th className="py-0.5 text-left">Expense Particulars</th>
+                    <th className="py-0.5 text-right whitespace-nowrap">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dotted divide-slate-300">
+                  {activePrintJob.data.expenses.map((exp, idx) => (
+                    <tr key={idx}>
+                      <td className="py-0.5 font-semibold">
+                        {exp.category} {exp.description ? `(${exp.description})` : ''}
+                      </td>
+                      <td className="py-0.5 text-right font-bold whitespace-nowrap">
+                        Rs. {Number(exp.amount || 0).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Financial Summary */}
+          <div className="space-y-1 text-xs font-mono text-black">
+            {activePrintJob.data.materialTotal > 0 && (
+              <div className="flex justify-between font-semibold">
+                <span>Material Total:</span>
+                <span className="font-bold">Rs. {activePrintJob.data.materialTotal.toLocaleString()}</span>
+              </div>
+            )}
             {activePrintJob.data.vehicleCharges > 0 && (
-              <div className="flex justify-between">
-                <span>Vehicle Charges:</span>
-                <span>+Rs. {activePrintJob.data.vehicleCharges.toLocaleString()}</span>
+              <div className="flex justify-between font-semibold">
+                <span>{activePrintJob.data.billingType === 'hourly' ? 'Vehicle Rental Charges:' : 'Vehicle Freight Charges:'}</span>
+                <span className="font-bold">+Rs. {activePrintJob.data.vehicleCharges.toLocaleString()}</span>
               </div>
             )}
             {activePrintJob.data.totalExpenses > 0 && (
-              <div className="flex justify-between">
+              <div className="flex justify-between font-semibold">
                 <span>Trip Expenses Billed:</span>
-                <span>+Rs. {activePrintJob.data.totalExpenses.toLocaleString()}</span>
+                <span className="font-bold">+Rs. {activePrintJob.data.totalExpenses.toLocaleString()}</span>
               </div>
             )}
             
-            <hr className="border-slate-300 my-2" />
+            <div className="border-t border-dashed border-black my-1"></div>
 
-            <div className="flex justify-between">
-              <span>Amount Before Discount:</span>
+            <div className="flex justify-between font-bold">
+              <span>Gross Total:</span>
               <span>Rs. {(activePrintJob.data.materialTotal + activePrintJob.data.vehicleCharges + activePrintJob.data.totalExpenses).toLocaleString()}</span>
             </div>
-            <div className="flex justify-between text-rose-600">
-              <span>Discount:</span>
-              <span>-Rs. {(activePrintJob.data.discount || 0).toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between font-black text-xs text-slate-900 border-t-2 border-double border-slate-400 pt-1 mt-1">
-              <span>NET TOTAL:</span>
+            {activePrintJob.data.discount > 0 && (
+              <div className="flex justify-between font-bold">
+                <span>Discount Allowed:</span>
+                <span>-Rs. {(activePrintJob.data.discount || 0).toLocaleString()}</span>
+              </div>
+            )}
+            <div className="flex justify-between font-black text-sm border-t-2 border-b-2 border-double border-black py-1 my-1">
+              <span>NET GRAND TOTAL:</span>
               <span>Rs. {activePrintJob.data.grandTotal.toLocaleString()}</span>
             </div>
             
-            <hr className="border-slate-300 my-2" />
-
-            <div className="flex justify-between">
-              <span className="text-slate-500">Payment Mode:</span>
+            <div className="flex justify-between pt-1 font-semibold">
+              <span>Payment Mode:</span>
               <span className="font-bold">{activePrintJob.data.paymentType}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Paid Amount:</span>
-              <span className="font-bold">
+            <div className="flex justify-between font-semibold">
+              <span>Paid Amount:</span>
+              <span className="font-black">
                 Rs. {(activePrintJob.data.paidAmount !== undefined ? activePrintJob.data.paidAmount : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.grandTotal : 0)).toLocaleString()}
               </span>
             </div>
@@ -672,204 +938,272 @@ export default function TripEntry() {
               const diff = activePrintJob.data.grandTotal - p;
               if (diff > 0) {
                 return (
-                  <div className="flex justify-between text-rose-600 font-bold">
-                    <span>Remaining (Credit / Payable):</span>
+                  <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
+                    <span>Remaining Due (Credit):</span>
                     <span>Rs. {diff.toLocaleString()}</span>
                   </div>
                 );
               } else if (diff < 0) {
                 return (
-                  <div className="flex justify-between text-emerald-600 font-bold">
-                    <span>Overpayment (Added to Advance):</span>
+                  <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
+                    <span>Overpayment (Advance):</span>
                     <span>+Rs. {(-diff).toLocaleString()}</span>
                   </div>
                 );
               } else {
                 return (
-                  <div className="flex justify-between text-emerald-600 font-bold">
-                    <span>Status:</span>
-                    <span>Fully Paid (Clear)</span>
+                  <div className="flex justify-between font-bold pt-0.5 text-emerald-800">
+                    <span>Payment Status:</span>
+                    <span>✓ Fully Paid (Clear)</span>
                   </div>
                 );
               }
             })()}
           </div>
           
-          <div className="print-footer text-center mt-6">
-            Software by Roonjha Developer - 03152914836
+          <div className="print-footer text-center mt-4 text-[10px] font-bold font-mono border-t border-dashed border-black pt-2">
+            Software by Roonjha Developers - 03152914836
           </div>
         </div>
       )}
 
+      {/* A4 Invoice Print Layout */}
       {activePrintJob && activePrintJob.type === 'a4' && (
-        <div className="print-only print-a4 p-8 bg-white font-mono text-xs">
-          <div className="text-center border-b border-slate-300 pb-4 mb-6">
-            <h1 className="text-xl font-bold">NORANI KANTA & MATERIALS SUPPLY ERP</h1>
-            <p className="text-xs text-slate-500 mt-1">Material Dispatch & Transport A4 Receipt</p>
-            <p className="text-xs text-slate-500">Ph: 03152914836 | Software by Roonjha Developer</p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="space-y-1">
-              <p className="font-bold text-slate-700">TRIP DETAILS:</p>
-              <p>Trip Number: <span className="font-bold">{activePrintJob.data.id}</span></p>
-              <p>Vehicle: {vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.number || (activePrintJob.data.vehicleId ? activePrintJob.data.vehicleId : 'Direct / None')} {vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.type ? `(${vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.type})` : ''}</p>
-              <p>Driver Name: {activePrintJob.data.driverName || '—'}</p>
-              <p>Route: {activePrintJob.data.from || '—'} ➔ {activePrintJob.data.to || '—'}</p>
+        <div className="print-only print-a4 p-8 bg-white text-slate-900 font-sans max-w-4xl mx-auto">
+          <div className="flex justify-between items-start border-b-2 border-slate-800 pb-4 mb-6">
+            <div className="flex items-center space-x-4">
+              <img src="/logo.jpeg" alt="Logo" className="h-20 w-auto object-contain" />
+              <div>
+                <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900">AL-MADINA CONSTRUCTION COMPANY</h1>
+                <p className="text-sm font-bold text-slate-700">Dumping, Heavy Logistics, Civil Construction &amp; Earth Moving</p>
+                <p className="text-xs text-slate-600 mt-1">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 | Haji Gul: 03458829298</p>
+                <p className="text-xs text-slate-600">Main RCD Highway, Winder, District Lasbela, Balochistan</p>
+              </div>
             </div>
-            <div className="space-y-1 text-right">
-              <p className="font-bold text-slate-700">CUSTOMER DETAILS:</p>
-              <p>Name: <span className="font-bold">{customers.find(c => c.id === activePrintJob.data.customerId)?.name || (activePrintJob.data.customerId === 'walk-in' ? 'Walk-in Customer' : activePrintJob.data.customerId)}</span></p>
-              <p>Phone: {customers.find(c => c.id === activePrintJob.data.customerId)?.phone || 'N/A'}</p>
-              <p>Date: {activePrintJob.data.date}</p>
+            <div className="text-right">
+              <div className="inline-block bg-slate-900 text-white px-4 py-1.5 rounded text-sm font-black uppercase tracking-wider mb-2">
+                {activePrintJob.data.billingType === 'hourly' ? 'HOURLY RENTAL INVOICE' : 'LOGISTICS DISPATCH INVOICE'}
+              </div>
+              <p className="text-sm font-bold font-mono">Invoice #: {activePrintJob.data.id}</p>
+              <p className="text-xs text-slate-600 font-semibold">Date: {activePrintJob.data.date}</p>
             </div>
           </div>
 
-          <table className="min-w-full divide-y divide-slate-200 text-left mb-6 font-mono text-xs">
-            <thead className="bg-slate-100 text-slate-700 uppercase font-bold">
-              <tr>
-                <th className="px-4 py-2">Material / Item</th>
-                <th className="px-4 py-2 text-right whitespace-nowrap">Quantity</th>
-                <th className="px-4 py-2 whitespace-nowrap">Unit</th>
-                <th className="px-4 py-2 text-right whitespace-nowrap">Rate</th>
-                <th className="px-4 py-2 text-right whitespace-nowrap">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
-              {activePrintJob.data.items && activePrintJob.data.items.length > 0 ? (
-                activePrintJob.data.items.map((it, idx) => (
-                  <tr key={idx}>
-                    <td className="px-4 py-3 font-semibold">{it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}</td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap font-bold">{it.quantity}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">{it.unit}</td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">Rs. {it.rate.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right font-bold whitespace-nowrap">Rs. {it.amount.toLocaleString()}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td className="px-4 py-3 font-semibold">{items.find(i => i.id === activePrintJob.data.itemId)?.name || activePrintJob.data.itemId}</td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap font-bold">{activePrintJob.data.quantity}</td>
-                  <td className="px-4 py-3 whitespace-nowrap">{activePrintJob.data.unit}</td>
-                  <td className="px-4 py-3 text-right whitespace-nowrap">Rs. {activePrintJob.data.rate.toLocaleString()}</td>
-                  <td className="px-4 py-3 text-right font-bold whitespace-nowrap">Rs. {activePrintJob.data.materialTotal.toLocaleString()}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          {/* Billed To and Trip Profile Grid */}
+          <div className="grid grid-cols-2 gap-6 bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 text-sm">
+            <div>
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-1">Billed To (Customer)</h3>
+              <p className="text-base font-bold text-slate-900">
+                {customers.find(c => c.id === activePrintJob.data.customerId)?.name || (activePrintJob.data.customerId === 'walk-in' ? 'Walk-in Customer' : activePrintJob.data.customerId)}
+              </p>
+              <p className="text-xs text-slate-600 font-medium">
+                Phone: {customers.find(c => c.id === activePrintJob.data.customerId)?.phone || '—'}
+              </p>
+              <p className="text-xs text-slate-600 font-medium">
+                Address: {customers.find(c => c.id === activePrintJob.data.customerId)?.address || customers.find(c => c.id === activePrintJob.data.customerId)?.area || 'Counter'}
+              </p>
+            </div>
 
-          {activePrintJob.data.expenses && activePrintJob.data.expenses.length > 0 && (
-            <div className="mb-6 space-y-1.5">
-              <p className="font-bold text-slate-700">TRIP EXPENSES DETAILS:</p>
-              <table className="min-w-full divide-y divide-slate-200 text-left font-mono text-xs">
-                <thead className="bg-slate-50 text-slate-600">
+            <div>
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 mb-1">Fleet &amp; Driver Details</h3>
+              <p className="font-bold text-slate-900">
+                Vehicle: {vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.number || (activePrintJob.data.vehicleId ? activePrintJob.data.vehicleId : 'Direct Machine')}
+                {activePrintJob.data.vehicleModel ? ` (${activePrintJob.data.vehicleModel})` : ''}
+              </p>
+              <p className="text-xs text-slate-600 font-medium">Driver: {activePrintJob.data.driverName || '—'} {activePrintJob.data.driverPhone ? `(${activePrintJob.data.driverPhone})` : ''}</p>
+              {activePrintJob.data.driverCnic && <p className="text-xs text-slate-600 font-medium">Driver CNIC: {activePrintJob.data.driverCnic}</p>}
+              <p className="text-xs text-slate-600 font-medium">Route: {activePrintJob.data.from || 'Base'} ➔ {activePrintJob.data.to || 'Site'}</p>
+            </div>
+          </div>
+
+          {/* Hourly Breakdown in A4 */}
+          {activePrintJob.data.billingType === 'hourly' && (
+            <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-4 mb-6 text-sm">
+              <h4 className="text-xs font-black uppercase tracking-wider text-indigo-900 mb-2 flex items-center space-x-1.5">
+                <Clock className="h-4 w-4 text-indigo-700" />
+                <span>Hourly Rental Specification (فی گھنٹہ کرایہ تفصیل)</span>
+              </h4>
+              <div className="grid grid-cols-4 gap-4">
+                <div>
+                  <span className="text-xs text-indigo-700 font-medium block">Departure Time:</span>
+                  <span className="font-bold text-indigo-950">{activePrintJob.data.startTime || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-xs text-indigo-700 font-medium block">Return Time:</span>
+                  <span className="font-bold text-indigo-950">{activePrintJob.data.endTime || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-xs text-indigo-700 font-medium block">Total Duration:</span>
+                  <span className="font-black text-indigo-950 text-base">{activePrintJob.data.totalHours || 0} Hours</span>
+                </div>
+                <div>
+                  <span className="text-xs text-indigo-700 font-medium block">Hourly Rate:</span>
+                  <span className="font-black text-indigo-950 text-base">Rs. {(activePrintJob.data.hourlyRate || 0).toLocaleString()} / Hr</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Items Table in A4 */}
+          {activePrintJob.data.items && activePrintJob.data.items.length > 0 && activePrintJob.data.items.some(i => i.quantity > 0) && (
+            <div className="mb-6">
+              <table className="w-full text-left border-collapse border border-slate-200 text-sm">
+                <thead className="bg-slate-100 text-slate-700 font-bold uppercase text-xs">
                   <tr>
-                    <th className="px-4 py-1">Expense Category</th>
-                    <th className="px-4 py-1">Description</th>
-                    <th className="px-4 py-1 text-right">Amount</th>
+                    <th className="p-2.5 border border-slate-200">#</th>
+                    <th className="p-2.5 border border-slate-200">Dispatched Material Description</th>
+                    <th className="p-2.5 border border-slate-200 text-right">Quantity</th>
+                    <th className="p-2.5 border border-slate-200 text-center">Unit</th>
+                    <th className="p-2.5 border border-slate-200 text-right">Unit Rate (PKR)</th>
+                    <th className="p-2.5 border border-slate-200 text-right">Amount (PKR)</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {activePrintJob.data.expenses.map((exp, idx) => (
+                <tbody className="divide-y divide-slate-200">
+                  {activePrintJob.data.items.map((it, idx) => (
                     <tr key={idx}>
-                      <td className="px-4 py-2">{exp.category}</td>
-                      <td className="px-4 py-2 text-slate-500">{exp.description || '—'}</td>
-                      <td className="px-4 py-2 text-right font-semibold">Rs. {exp.amount.toLocaleString()}</td>
+                      <td className="p-2.5 border border-slate-200 font-mono text-xs">{idx + 1}</td>
+                      <td className="p-2.5 border border-slate-200 font-bold text-slate-800">
+                        {it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}
+                      </td>
+                      <td className="p-2.5 border border-slate-200 text-right font-bold">{it.quantity}</td>
+                      <td className="p-2.5 border border-slate-200 text-center font-medium">{it.unit}</td>
+                      <td className="p-2.5 border border-slate-200 text-right font-medium">{it.rate.toLocaleString()}</td>
+                      <td className="p-2.5 border border-slate-200 text-right font-black">{it.amount.toLocaleString()}</td>
                     </tr>
                   ))}
-                  <tr className="bg-slate-50 font-bold">
-                    <td colSpan={2} className="px-4 py-2 text-right">Total expenses:</td>
-                    <td className="px-4 py-2 text-right">Rs. {activePrintJob.data.totalExpenses.toLocaleString()}</td>
-                  </tr>
                 </tbody>
               </table>
             </div>
           )}
 
-          <div className="flex justify-end mt-4">
-            <div className="w-80 space-y-1.5 border-t border-slate-300 pt-3">
+          {/* Totals and Signatures */}
+          <div className="grid grid-cols-2 gap-8 items-start mb-12">
+            <div>
+              {activePrintJob.data.expenses && activePrintJob.data.expenses.length > 0 && (
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs">
+                  <h4 className="font-bold text-slate-700 mb-1 uppercase tracking-wide">Billed Expenses Breakdown</h4>
+                  <div className="space-y-1">
+                    {activePrintJob.data.expenses.map((e, idx) => (
+                      <div key={idx} className="flex justify-between">
+                        <span>{e.category} {e.description ? `(${e.description})` : ''}:</span>
+                        <span className="font-bold">Rs. {Number(e.amount).toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2 text-sm bg-slate-50 p-4 rounded-xl border border-slate-200">
               <div className="flex justify-between">
-                <span>Material Total:</span>
-                <span>Rs. {activePrintJob.data.materialTotal.toLocaleString()}</span>
+                <span className="text-slate-600 font-semibold">Material Subtotal:</span>
+                <span className="font-bold">Rs. {activePrintJob.data.materialTotal.toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
-                <span>Vehicle Charges (Freight):</span>
-                <span>+Rs. {activePrintJob.data.vehicleCharges.toLocaleString()}</span>
+                <span className="text-slate-600 font-semibold">{activePrintJob.data.billingType === 'hourly' ? 'Vehicle Hourly Rent:' : 'Vehicle Freight:'}</span>
+                <span className="font-bold">+Rs. {activePrintJob.data.vehicleCharges.toLocaleString()}</span>
               </div>
-              <div className="flex justify-between">
-                <span>Trip Expenses Billed:</span>
-                <span>+Rs. {activePrintJob.data.totalExpenses.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Gross Total Before Discount:</span>
-                <span>Rs. {(activePrintJob.data.materialTotal + activePrintJob.data.vehicleCharges + activePrintJob.data.totalExpenses).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between text-rose-600">
-                <span>Discount Allowed:</span>
-                <span>-Rs. {(activePrintJob.data.discount || 0).toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between font-bold border-t border-slate-200 pt-1 text-sm">
-                <span>Net Total:</span>
+              {activePrintJob.data.totalExpenses > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-slate-600 font-semibold">Trip Expenses:</span>
+                  <span className="font-bold">+Rs. {activePrintJob.data.totalExpenses.toLocaleString()}</span>
+                </div>
+              )}
+              {activePrintJob.data.discount > 0 && (
+                <div className="flex justify-between text-rose-700">
+                  <span className="font-semibold">Discount Allowed:</span>
+                  <span className="font-bold">-Rs. {activePrintJob.data.discount.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="border-t-2 border-slate-800 pt-2 flex justify-between text-lg font-black text-slate-900">
+                <span>Grand Total:</span>
                 <span>Rs. {activePrintJob.data.grandTotal.toLocaleString()}</span>
               </div>
-              <div className="border-t border-slate-100 my-1"></div>
-              <div className="flex justify-between font-semibold">
-                <span>Paid (Via {activePrintJob.data.paymentType}):</span>
-                <span>Rs. {(activePrintJob.data.paidAmount !== undefined ? activePrintJob.data.paidAmount : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.grandTotal : 0)).toLocaleString()}</span>
+              <div className="flex justify-between text-sm font-semibold pt-1">
+                <span>Amount Paid ({activePrintJob.data.paymentType}):</span>
+                <span className="font-bold text-emerald-700">
+                  Rs. {(activePrintJob.data.paidAmount !== undefined ? activePrintJob.data.paidAmount : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.grandTotal : 0)).toLocaleString()}
+                </span>
               </div>
-              {(() => {
-                const p = activePrintJob.data.paidAmount !== undefined ? activePrintJob.data.paidAmount : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.grandTotal : 0);
-                const diff = activePrintJob.data.grandTotal - p;
-                if (diff > 0) {
-                  return (
-                    <div className="flex justify-between text-rose-600 font-bold">
-                      <span>Remaining Due (Credit):</span>
-                      <span>Rs. {diff.toLocaleString()}</span>
-                    </div>
-                  );
-                } else if (diff < 0) {
-                  return (
-                    <div className="flex justify-between text-emerald-600 font-bold">
-                      <span>Overpayment (Added to Advance):</span>
-                      <span>+Rs. {(-diff).toLocaleString()}</span>
-                    </div>
-                  );
-                } else {
-                  return (
-                    <div className="flex justify-between text-emerald-600 font-bold">
-                      <span>Payment Status:</span>
-                      <span>Fully Paid (Clear)</span>
-                    </div>
-                  );
-                }
-              })()}
+              <div className="flex justify-between text-sm font-bold pt-1 border-t border-slate-300 text-rose-800">
+                <span>Balance Due:</span>
+                <span>Rs. {Math.max(0, activePrintJob.data.grandTotal - (activePrintJob.data.paidAmount || 0)).toLocaleString()}</span>
+              </div>
             </div>
           </div>
 
-          <div className="print-footer text-center mt-12 text-slate-500 text-xs">
-            Software by Roonjha Developer - 03152914836
+          <div className="grid grid-cols-3 gap-8 text-center pt-8 border-t border-slate-200 text-xs font-semibold text-slate-600">
+            <div>
+              <div className="border-b border-slate-400 pb-8 mb-1"></div>
+              <span>Driver / Logistics Incharge</span>
+            </div>
+            <div>
+              <div className="border-b border-slate-400 pb-8 mb-1"></div>
+              <span>Customer Signature / Receiver</span>
+            </div>
+            <div>
+              <div className="border-b border-slate-400 pb-8 mb-1"></div>
+              <span>Authorized Signatory</span>
+            </div>
+          </div>
+
+          <div className="print-footer text-center mt-8 text-xs text-slate-400 font-mono">
+            Software by Roonjha Developers - 03152914836
           </div>
         </div>
       )}
 
-      {/* Primary Workspace View (Hidden during individual receipt print jobs) */}
+      {/* Main UI Workspace */}
       <div className={`space-y-6 ${activePrintJob ? 'no-print' : ''}`}>
+        {/* Header Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 no-print">
           <div>
-            <h2 className="text-xl font-bold text-slate-800">Trip Dispatches & Logistics</h2>
-            <p className="text-sm text-slate-500">Record vehicle materials deliveries, track driver trip revenues, and log expenses</p>
+            <h2 className="text-xl font-black text-slate-800 flex items-center space-x-2">
+              <Truck className="h-6 w-6 text-indigo-600" />
+              <span>Logistics Trips &amp; Hourly Rentals (ٹرپ لاگنگ اور گھنٹہ کرایہ)</span>
+            </h2>
+            <p className="text-sm text-slate-500">Record vehicle materials deliveries, log hourly rentals, track driver revenues and route expenses</p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleDownloadTripsCSV}
+              className="flex items-center space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-2 rounded-lg text-sm font-medium transition shadow-sm"
+              title="Download filtered trips as CSV spreadsheet"
+            >
+              <Download className="h-4 w-4" />
+              <span>Download CSV</span>
+            </button>
+            <button
+              onClick={handlePrintAllTripsLedger}
+              className="flex items-center space-x-1.5 bg-slate-800 text-white hover:bg-slate-900 px-3 py-2 rounded-lg text-sm font-medium transition shadow-sm"
+              title="Print complete ledger of dispatches"
+            >
+              <Printer className="h-4 w-4" />
+              <span>Print Register</span>
+            </button>
+            <button
+              onClick={() => handleOpenForm()}
+              className="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition shadow-sm"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Log Trip / Rental</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Filters and Search Bar */}
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3 no-print">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             {/* Search Input */}
-            <div className="relative min-w-[240px]">
+            <div className="relative flex-1 min-w-[260px]">
               <input
                 type="text"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search trip no, vehicle, customer..."
-                className="w-full pl-8 pr-7 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-white"
+                placeholder="Search trip no, vehicle, driver, customer, route, phone..."
+                className="w-full pl-9 pr-8 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-slate-50/50"
               />
-              <Search className="h-4 w-4 text-slate-400 absolute left-2.5 top-3" />
+              <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5" />
               {searchQuery && (
                 <button
                   type="button"
@@ -882,1176 +1216,943 @@ export default function TripEntry() {
               )}
             </div>
 
-            <button
-              onClick={handleDownloadTripsCSV}
-              className="flex items-center space-x-2 bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-2 rounded-lg text-sm font-medium transition shadow-sm"
-              title="Download all saved trips as CSV spreadsheet"
-            >
-              <Download className="h-4 w-4" />
-              <span>Download CSV</span>
-            </button>
-            <button
-              onClick={handlePrintAllTripsLedger}
-              className="flex items-center space-x-2 bg-slate-800 text-white hover:bg-slate-900 px-3 py-2 rounded-lg text-sm font-medium transition"
-              title="Print complete ledger of dispatches"
-            >
-              <Printer className="h-4 w-4" />
-              <span>Print Ledger</span>
-            </button>
-            <button
-              onClick={() => handleOpenForm()}
-              className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Create New Trip</span>
-            </button>
+            {/* Mode Filter Toggle */}
+            <div className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setBillingFilter('all')}
+                className={`px-3 py-1.5 rounded-md transition ${billingFilter === 'all' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+              >
+                All Entries ({trips.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBillingFilter('fixed')}
+                className={`px-3 py-1.5 rounded-md transition ${billingFilter === 'fixed' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+              >
+                Standard Trips ({trips.filter(t => t.billingType !== 'hourly').length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBillingFilter('hourly')}
+                className={`px-3 py-1.5 rounded-md transition ${billingFilter === 'hourly' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+              >
+                Hourly Rentals ({trips.filter(t => t.billingType === 'hourly').length})
+              </button>
+            </div>
+
+            {/* Date Pickers */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg">
+                <Calendar className="h-4 w-4 text-slate-400 shrink-0" />
+                <span className="text-xs font-semibold text-slate-500">From:</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 px-2.5 py-1.5 rounded-lg">
+                <Calendar className="h-4 w-4 text-slate-400 shrink-0" />
+                <span className="text-xs font-semibold text-slate-500">To:</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={e => setEndDate(e.target.value)}
+                  className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none cursor-pointer"
+                />
+              </div>
+
+              {(startDate || endDate) && (
+                <button
+                  type="button"
+                  onClick={() => { setStartDate(''); setEndDate(''); }}
+                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-lg border border-rose-200 transition flex items-center space-x-1"
+                  title="Clear date filter"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  <span>Reset</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="print-a4 print-container space-y-4">
-          <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-            <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
-              TRIP DISPATCHES & LOGISTICS REGISTER
-            </p>
-            <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
-              <div>Total Trips: {filteredTrips.length}</div>
-              <div>Generated: {new Date().toLocaleDateString('en-GB')}</div>
-            </div>
+        {/* Filtered Statistics Summary Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 no-print">
+          <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs">
+            <p className="text-[11px] font-medium text-slate-500">Total Filtered</p>
+            <p className="text-lg font-black text-slate-800">{filteredTrips.length}</p>
           </div>
+          <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs">
+            <p className="text-[11px] font-medium text-slate-500">Vehicle Freight / Rent</p>
+            <p className="text-lg font-black text-indigo-700">Rs. {filteredTrips.reduce((s, t) => s + (t.vehicleCharges || 0), 0).toLocaleString()}</p>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs">
+            <p className="text-[11px] font-medium text-slate-500">Trip Expenses</p>
+            <p className="text-lg font-black text-rose-600">Rs. {filteredTrips.reduce((s, t) => s + (t.totalExpenses || 0), 0).toLocaleString()}</p>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs">
+            <p className="text-[11px] font-medium text-slate-500">Net Logistics Profit</p>
+            <p className="text-lg font-black text-emerald-600">Rs. {filteredTrips.reduce((s, t) => s + (t.netTripProfit || 0), 0).toLocaleString()}</p>
+          </div>
+          <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs col-span-2 sm:col-span-1">
+            <p className="text-[11px] font-medium text-slate-500">Total Invoiced</p>
+            <p className="text-lg font-black text-slate-900">Rs. {filteredTrips.reduce((s, t) => s + (t.grandTotal || 0), 0).toLocaleString()}</p>
+          </div>
+        </div>
 
-          {/* Trips Registry Table */}
-          <div className="bg-white rounded-lg shadow-sm border border-slate-100 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-100 text-left">
-                <thead className="bg-slate-50 text-slate-500 uppercase text-xs font-semibold">
-                  <tr>
-                    <th className="px-3 py-3.5 whitespace-nowrap">Date</th>
-                    <th className="px-3 py-3.5 whitespace-nowrap">Trip No.</th>
-                    <th className="px-3 py-3.5 whitespace-nowrap">Vehicle / Driver</th>
-                    <th className="px-3 py-3.5 whitespace-nowrap">Customer</th>
-                    <th className="px-3 py-3.5 whitespace-nowrap">Material Details</th>
-                    <th className="px-3 py-3.5 text-right whitespace-nowrap">Vehicle Charges</th>
-                    <th className="px-3 py-3.5 text-right whitespace-nowrap">Expenses</th>
-                    <th className="px-3 py-3.5 text-right whitespace-nowrap">Net Profit</th>
-                    <th className="px-3 py-3.5 text-right whitespace-nowrap">Invoice Total</th>
-                    <th className="px-3 py-3.5 text-right no-print">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {filteredTrips.map(t => {
-                    const cust = customers.find(c => c.id === t.customerId);
-                    const item = items.find(i => i.id === t.itemId);
-                    const veh = vehicles.find(v => v.id === t.vehicleId);
+        {/* Dispatches & Rentals Ledger Table */}
+        <div className="bg-white rounded-xl shadow-xs border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+              <thead className="bg-slate-50 text-slate-600 uppercase text-xs font-semibold">
+                <tr>
+                  <th className="px-3 py-3.5 whitespace-nowrap">Date / ID</th>
+                  <th className="px-3 py-3.5 whitespace-nowrap">Mode / Status</th>
+                  <th className="px-3 py-3.5 whitespace-nowrap">Vehicle &amp; Driver</th>
+                  <th className="px-3 py-3.5 whitespace-nowrap">Customer</th>
+                  <th className="px-3 py-3.5 whitespace-nowrap">Route / Duration</th>
+                  <th className="px-3 py-3.5 whitespace-nowrap">Materials Dispatched</th>
+                  <th className="px-3 py-3.5 text-right whitespace-nowrap">Freight / Rent</th>
+                  <th className="px-3 py-3.5 text-right whitespace-nowrap">Expenses</th>
+                  <th className="px-3 py-3.5 text-right whitespace-nowrap">Invoice Total</th>
+                  <th className="px-3 py-3.5 text-right no-print">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {paginatedTrips.map(t => {
+                  const cust = customers.find(c => c.id === t.customerId);
+                  const veh = vehicles.find(v => v.id === t.vehicleId);
 
-                    return (
-                      <tr key={t.id} className="hover:bg-slate-50/50">
-                        <td className="px-3 py-3 text-slate-500 whitespace-nowrap">{t.date}</td>
-                        <td className="px-3 py-3 font-mono font-bold text-indigo-700 whitespace-nowrap">{t.id}</td>
-                        <td className="px-3 py-3 whitespace-nowrap">
-                          <p className="font-semibold text-slate-700 whitespace-nowrap">{veh?.number || (t.vehicleId ? t.vehicleId : '— (Direct / No Vehicle)')}</p>
-                          <p className="text-xs text-slate-400 whitespace-nowrap">{t.driverName || '—'}</p>
-                        </td>
-                        <td className="px-3 py-3 text-slate-700 font-medium whitespace-nowrap">{cust?.name || (t.customerId === 'walk-in' ? 'Walk-in Customer' : t.customerId)}</td>
-                        <td className="px-3 py-3">
-                          {t.items && t.items.length > 0 ? (
-                            <div className="space-y-1">
-                              {t.items.map((it, idx) => (
-                                <div key={idx} className="leading-tight whitespace-nowrap">
-                                  <span className="font-semibold text-slate-700">{it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}</span>
-                                  <span className="text-xs text-slate-500 ml-1.5 font-mono">({it.quantity} {it.unit} @ Rs. {it.rate.toLocaleString()})</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="whitespace-nowrap">
-                              <span className="font-medium text-slate-700">{item?.name || t.itemId}</span>
-                              <span className="text-xs text-slate-500 ml-1.5 font-mono">({t.quantity} {item?.unit} @ Rs. {t.rate.toLocaleString()})</span>
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-3 py-3 text-right font-medium whitespace-nowrap">Rs. {t.vehicleCharges.toLocaleString()}</td>
-                        <td className="px-3 py-3 text-right text-rose-600 font-medium whitespace-nowrap">Rs. {t.totalExpenses.toLocaleString()}</td>
-                        <td className={`px-3 py-3 text-right font-bold whitespace-nowrap ${t.netTripProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          Rs. {t.netTripProfit.toLocaleString()}
-                        </td>
-                        <td className="px-3 py-3 text-right font-bold text-slate-800 whitespace-nowrap">
-                          <p className="whitespace-nowrap">Rs. {t.grandTotal.toLocaleString()}</p>
-                          {t.paidAmount !== undefined && t.paidAmount < t.grandTotal ? (
-                            <p className="text-[10px] text-rose-600 font-bold whitespace-nowrap">
-                              Paid: Rs. {t.paidAmount.toLocaleString()} • Due: Rs. {(t.grandTotal - t.paidAmount).toLocaleString()}
-                            </p>
-                          ) : t.paidAmount !== undefined && t.paidAmount > t.grandTotal ? (
-                            <p className="text-[10px] text-emerald-600 font-bold whitespace-nowrap">
-                              Paid: Rs. {t.paidAmount.toLocaleString()} • Adv: +Rs. {(t.paidAmount - t.grandTotal).toLocaleString()}
-                            </p>
-                          ) : (
-                            <p className="text-[10px] text-slate-400 font-medium whitespace-nowrap">{t.paymentType}</p>
-                          )}
-                        </td>
-                        <td className="px-3 py-3 text-right space-x-2 whitespace-nowrap no-print">
-                          <button
-                            onClick={() => setActiveViewTrip(t)}
-                            className="text-slate-400 hover:text-indigo-600 transition"
-                            title="View Details"
-                          >
-                            <FileText className="h-4 w-4 inline" />
-                          </button>
+                  return (
+                    <tr key={t.id} className="hover:bg-slate-50/70 transition">
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <span className="font-mono font-bold text-indigo-700 block">{t.id}</span>
+                        <span className="text-xs text-slate-500">{t.date}</span>
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        {t.billingType === 'hourly' ? (
+                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                            <Clock className="h-3 w-3" />
+                            <span>Hourly ({t.totalHours || 0}h)</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                            <Truck className="h-3 w-3" />
+                            <span>Standard Trip</span>
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <p className="font-bold text-slate-800">{veh?.number || (t.vehicleId ? t.vehicleId : '— (Direct / None)')}</p>
+                        <p className="text-xs text-slate-500">{t.driverName || '—'} {t.driverPhone ? `• ${t.driverPhone}` : ''}</p>
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <p className="font-semibold text-slate-800">{cust?.name || (t.customerId === 'walk-in' ? 'Walk-in Customer' : t.customerId)}</p>
+                        <span className="text-[10px] uppercase font-bold text-slate-400">{t.paymentType}</span>
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <p className="text-xs font-semibold text-slate-700">
+                          {t.from || 'Base'} ➔ {t.to || 'Site'}
+                        </p>
+                        {t.billingType === 'hourly' && (t.startTime || t.endTime) && (
+                          <p className="text-[11px] font-mono text-amber-800">
+                            {t.startTime || '—'} to {t.endTime || '—'}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        {t.items && t.items.length > 0 && t.items.some(i => i.quantity > 0) ? (
+                          <div className="space-y-0.5">
+                            {t.items.filter(i => i.quantity > 0).map((it, idx) => (
+                              <div key={idx} className="text-xs leading-tight whitespace-nowrap">
+                                <span className="font-semibold text-slate-700">{it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}</span>
+                                <span className="text-slate-500 ml-1 font-mono">({it.quantity} {it.unit})</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">No materials (Machine only)</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">
+                        Rs. {t.vehicleCharges.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-3 text-right text-rose-600 font-medium whitespace-nowrap">
+                        Rs. {t.totalExpenses.toLocaleString()}
+                      </td>
+                      <td className="px-3 py-3 text-right whitespace-nowrap">
+                        <p className="font-black text-slate-900">Rs. {t.grandTotal.toLocaleString()}</p>
+                        {t.paidAmount !== undefined && t.paidAmount < t.grandTotal ? (
+                          <p className="text-[10px] text-rose-600 font-bold">
+                            Due: Rs. {(t.grandTotal - t.paidAmount).toLocaleString()}
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-emerald-600 font-bold">Paid</p>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-right whitespace-nowrap no-print">
+                        <div className="flex items-center justify-end space-x-1">
                           <button
                             onClick={() => handlePrintReceipt(t)}
-                            className="text-slate-400 hover:text-slate-600 transition"
-                            title="Print Ticket"
+                            className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"
+                            title="Print 80mm Thermal Receipt"
                           >
-                            <Printer className="h-4 w-4 inline" />
+                            <Printer className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => handlePrintA4(t)}
+                            className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded transition"
+                            title="Print A4 Invoice"
+                          >
+                            <FileText className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleOpenForm(t)}
-                            className="text-slate-400 hover:text-indigo-600 transition"
+                            className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 rounded transition"
                             title="Edit Trip"
                           >
-                            <Edit className="h-4 w-4 inline" />
+                            <Edit className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleDelete(t.id)}
-                            className="text-slate-400 hover:text-rose-600 transition"
+                            className="p-1.5 text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded transition"
                             title="Delete Trip"
                           >
-                            <Trash className="h-4 w-4 inline" />
+                            <Trash className="h-4 w-4" />
                           </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filteredTrips.length === 0 && (
-                    <tr>
-                      <td colSpan={10} className="text-center py-12 text-slate-400">
-                        <Truck className="h-10 w-10 mx-auto mb-2 stroke-1" />
-                        <p className="text-sm font-medium">
-                          {searchQuery ? `No matching trips found for "${searchQuery}".` : 'No trips registered yet.'}
-                        </p>
+                        </div>
                       </td>
                     </tr>
-                  )}
-                </tbody>
-                {filteredTrips.length > 0 && (
-                  <tfoot className="bg-slate-900 text-white font-bold text-xs md:text-sm border-t border-slate-700 font-mono">
-                    <tr>
-                      <td colSpan={5} className="px-4 py-3 text-right font-black">Grand Totals ({filteredTrips.length}):</td>
-                      <td className="px-4 py-3 text-right text-indigo-300">Rs. {filteredTrips.reduce((sum, t) => sum + t.vehicleCharges, 0).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right text-rose-300">Rs. {filteredTrips.reduce((sum, t) => sum + t.totalExpenses, 0).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right text-emerald-300">Rs. {filteredTrips.reduce((sum, t) => sum + t.netTripProfit, 0).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right text-emerald-300 font-black">Rs. {filteredTrips.reduce((sum, t) => sum + t.grandTotal, 0).toLocaleString()}</td>
-                      <td className="no-print"></td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
 
-          <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-            Software by Roonjha Developer - 03152914836
-          </div>
+          <Pagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalItems={filteredTrips.length}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+          />
         </div>
       </div>
 
-      {/* Dispatch Ticket Creation / Edit Form Modal */}
+      {/* Main Create / Edit Modal */}
       {isFormOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center z-50 no-print p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl md:max-w-6xl max-h-[94vh] flex flex-col overflow-hidden my-auto">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-150">
             {/* Modal Header */}
-            <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center shrink-0">
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-4 sm:px-6 flex items-center justify-between border-b border-indigo-900">
               <div className="flex items-center space-x-3">
-                <div className="p-2 bg-indigo-600 rounded-lg">
-                  <Truck className="h-5 w-5 text-white" />
+                <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md">
+                  <Truck className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold">
-                    {editingId ? `Edit Logistics Trip (${editingId})` : 'New Trip Dispatch & Sales Invoice'}
+                  <h3 className="text-lg font-bold">
+                    {editingId ? `Edit Dispatch / Rental (#${editingId})` : 'Log New Trip Dispatch / Hourly Rental'}
                   </h3>
-                  <p className="text-xs text-slate-400">Dispatch materials, calculate freight & record customer transactions</p>
+                  <p className="text-xs text-indigo-200">
+                    Create delivery slip, deduct inventory materials, bill vehicle freight / per-hour charges
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsFormOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+                className="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-white/10 transition"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
-            
-            <form onSubmit={handleSave} className="p-6 space-y-6 overflow-y-auto flex-1">
-              {/* Top Section: 2 Columns (Logistics & Route vs Customer Profile & Ledger) */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-                {/* Left Column (7 cols): Logistics Profile, Vehicle & Route */}
-                <div className="lg:col-span-7 space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+            {/* Modal Body Form */}
+            <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+              {/* Billing Mode Switcher */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">Select Dispatch / Rental Mode:</span>
+                  <span className="text-sm font-black text-slate-800">
+                    {billingType === 'hourly' ? '⏱️ Hourly Rental (فی گھنٹہ کرایہ - گاڑی اور مشینری)' : '🚛 Standard Logistics Dispatch (پر ٹن / فکسڈ ٹرپ)'}
+                  </span>
+                </div>
+                <div className="flex items-center bg-white p-1 rounded-lg border border-slate-300 shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => setBillingType('fixed')}
+                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition flex items-center space-x-1.5 ${
+                      billingType === 'fixed'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Truck className="h-3.5 w-3.5" />
+                    <span>Standard Trip / By Ton</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBillingType('hourly');
+                      if (hourlyRate <= 0 && vehicleId) {
+                        const v = vehicles.find(veh => veh.id === vehicleId);
+                        if (v && v.hourlyRate) {
+                          setHourlyRate(v.hourlyRate);
+                          if (totalHours > 0) setVehicleCharges(Math.round(totalHours * v.hourlyRate));
+                        }
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-md text-xs font-bold transition flex items-center space-x-1.5 ${
+                      billingType === 'hourly'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Clock className="h-3.5 w-3.5" />
+                    <span>Hourly Rental (فی گھنٹہ)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Top Row: Date, Vehicle, Driver Details */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50/50 p-4 rounded-xl border border-slate-200">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={date}
+                    onChange={e => setDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:border-indigo-500 font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Select Vehicle (گاڑی / مشین منتخب کریں)
+                  </label>
+                  <SearchableSelect
+                    options={[
+                      { value: '', label: 'None / Direct Third-Party' },
+                      ...vehicles.map(v => ({
+                        value: v.id,
+                        label: `${v.number} (${v.type || 'Vehicle'})`,
+                        subLabel: `${v.driver ? `Driver: ${v.driver}` : 'No driver'} • Cat: ${v.category || 'tons'}${v.hourlyRate ? ` • Rs. ${v.hourlyRate}/hr` : ''}`,
+                        searchTerms: `${v.number} ${v.type} ${v.driver || ''} ${v.model || ''}`,
+                      }))
+                    ]}
+                    value={vehicleId}
+                    onChange={val => handleSelectVehicle(val)}
+                    placeholder="-- Select Vehicle / Dumper --"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Driver Name &amp; Phone
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Driver Name"
+                      value={driverName}
+                      onChange={e => setDriverName(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:border-indigo-500"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Driver Phone"
+                      value={driverPhone}
+                      onChange={e => setDriverPhone(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Hourly Rental Specific Panel (Active when Hourly selected) */}
+              {billingType === 'hourly' && (
+                <div className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl p-4 space-y-4">
+                  <div className="flex items-center justify-between border-b border-amber-200 pb-2">
+                    <div className="flex items-center space-x-2">
+                      <Clock className="h-5 w-5 text-amber-700" />
+                      <h4 className="font-bold text-amber-950 text-sm">Hourly Rental Parameters (فی گھنٹہ حساب کتاب)</h4>
+                    </div>
+                    <span className="text-xs font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded">
+                      Auto-calculates hours &amp; total rent
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    {/* Departure Time */}
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
-                        Dispatch Date
-                      </label>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="block text-xs font-bold text-amber-950">Start Time (روانگی)</label>
+                        <button
+                          type="button"
+                          onClick={() => handleTimeChange(getNowTimeStr(), endTime)}
+                          className="text-[10px] text-amber-800 font-bold bg-amber-200/80 px-1.5 py-0.5 rounded hover:bg-amber-300 transition"
+                        >
+                          Now
+                        </button>
+                      </div>
                       <input
-                        type="date"
-                        required
-                        value={date}
-                        onChange={e => setDate(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-white"
+                        type="time"
+                        value={startTime}
+                        onChange={e => handleTimeChange(e.target.value, endTime)}
+                        className="w-full px-3 py-2 border border-amber-300 rounded-lg text-sm bg-white font-semibold text-slate-800 focus:outline-none focus:border-amber-600"
                       />
                     </div>
 
+                    {/* Return Time */}
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
-                        Select Vehicle (Optional)
-                      </label>
-                      <SearchableSelect
-                        options={[
-                          {
-                            value: '',
-                            label: '-- No Vehicle / Direct / Unassigned --',
-                            subLabel: 'Direct pickup or customer vehicle',
-                            searchTerms: 'no vehicle none direct pickup unassigned',
-                          },
-                          ...vehicles.filter(v => v.active || v.id === vehicleId).map(v => ({
-                            value: v.id,
-                            label: `${v.number} (${v.type})`,
-                            subLabel: v.driver ? `Driver: ${v.driver}` : undefined,
-                            badge: v.type,
-                            badgeColor: 'indigo' as const,
-                            searchTerms: `${v.number} ${v.type} ${v.driver || ''}`,
-                          }))
-                        ]}
-                        value={vehicleId}
-                        onChange={val => {
-                          setVehicleId(val);
-                          const veh = vehicles.find(v => v.id === val);
-                          if (veh && veh.driver) {
-                            setDriverName(veh.driver);
-                          }
-                        }}
-                        placeholder="-- Choose Vehicle (Optional) --"
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="block text-xs font-bold text-amber-950">Return Time (واپسی)</label>
+                        <button
+                          type="button"
+                          onClick={() => handleTimeChange(startTime, getNowTimeStr())}
+                          className="text-[10px] text-amber-800 font-bold bg-amber-200/80 px-1.5 py-0.5 rounded hover:bg-amber-300 transition"
+                        >
+                          Now
+                        </button>
+                      </div>
+                      <input
+                        type="time"
+                        value={endTime}
+                        onChange={e => handleTimeChange(startTime, e.target.value)}
+                        className="w-full px-3 py-2 border border-amber-300 rounded-lg text-sm bg-white font-semibold text-slate-800 focus:outline-none focus:border-amber-600"
+                      />
+                    </div>
+
+                    {/* Total Hours */}
+                    <div>
+                      <label className="block text-xs font-bold text-amber-950 mb-1">Total Hours (گھنٹے)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={totalHours === 0 ? '' : totalHours}
+                        onChange={e => handleTotalHoursChange(e.target.value === '' ? 0 : Number(e.target.value))}
+                        placeholder="e.g. 4.5"
+                        className="w-full px-3 py-2 border-2 border-amber-400 rounded-lg text-sm bg-white font-black text-amber-900 focus:outline-none focus:border-amber-600"
+                      />
+                    </div>
+
+                    {/* Hourly Rate */}
+                    <div>
+                      <label className="block text-xs font-bold text-amber-950 mb-1">Rate / Hour (روپے فی گھنٹہ)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={hourlyRate === 0 ? '' : hourlyRate}
+                        onChange={e => handleHourlyRateChange(e.target.value === '' ? 0 : Number(e.target.value))}
+                        placeholder="e.g. 1000"
+                        className="w-full px-3 py-2 border-2 border-amber-400 rounded-lg text-sm bg-white font-black text-amber-900 focus:outline-none focus:border-amber-600"
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Meter Readings & Driver CNIC */}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-amber-200 text-xs">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
-                        Driver Name (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Driver Name"
-                        value={driverName}
-                        onChange={e => setDriverName(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
-                        From Location (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={from}
-                        onChange={e => setFrom(e.target.value)}
-                        placeholder="e.g. Quarry / Pit"
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
-                        To Location (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={to}
-                        onChange={e => setTo(e.target.value)}
-                        placeholder="e.g. Site / Customer"
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-white"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                    <div>
-                      <label className="block text-xs font-semibold text-indigo-700 uppercase tracking-wider mb-1">
-                        Vehicle Charges / Freight (Rs.)
-                      </label>
+                      <label className="block font-semibold text-amber-900 mb-1">Meter Start (km / hr)</label>
                       <input
                         type="number"
-                        min="0"
-                        placeholder="0"
-                        value={vehicleCharges === 0 ? '' : vehicleCharges}
-                        onChange={e => setVehicleCharges(e.target.value === '' ? 0 : Number(e.target.value))}
-                        className="w-full px-3 py-2 border border-indigo-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-indigo-50/40 font-semibold text-indigo-900"
+                        value={odometerStart}
+                        onChange={e => setOdometerStart(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="Start Reading"
+                        className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg bg-white"
                       />
                     </div>
-
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-1">
-                        Discount Allowed (Rs.)
-                      </label>
+                      <label className="block font-semibold text-amber-900 mb-1">Meter End (km / hr)</label>
                       <input
                         type="number"
-                        min="0"
-                        placeholder="0"
-                        value={discount === 0 ? '' : discount}
-                        onChange={e => setDiscount(e.target.value === '' ? 0 : Number(e.target.value))}
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500 bg-white"
+                        value={odometerEnd}
+                        onChange={e => setOdometerEnd(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="End Reading"
+                        className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-amber-900 mb-1">Driver CNIC</label>
+                      <input
+                        type="text"
+                        value={driverCnic}
+                        onChange={e => setDriverCnic(e.target.value)}
+                        placeholder="xxxxx-xxxxxxx-x"
+                        className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-semibold text-amber-900 mb-1">Vehicle Model</label>
+                      <input
+                        type="text"
+                        value={vehicleModel}
+                        onChange={e => setVehicleModel(e.target.value)}
+                        placeholder="e.g. Hino 500 / CAT 320"
+                        className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg bg-white"
                       />
                     </div>
                   </div>
                 </div>
+              )}
 
-                {/* Right Column (5 cols): Dedicated Customer Panel (Oilshop Style Golden Card) */}
-                <div className="lg:col-span-5 bg-gradient-to-br from-amber-50 to-amber-100/70 border-2 border-amber-300 rounded-xl p-4 shadow-sm flex flex-col justify-between space-y-3.5">
+              {/* Pickup and Drop Locations */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center space-x-1">
+                    <MapPin className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Pickup Location (روانگی کی جگہ / Quarry / Yard)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={from}
+                    onChange={e => setFrom(e.target.value)}
+                    placeholder="e.g. Winder Yard / Quarry Site"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center space-x-1">
+                    <Navigation className="h-3.5 w-3.5 text-emerald-600" />
+                    <span>Drop Location (منزل / Customer Site)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={to}
+                    onChange={e => setTo(e.target.value)}
+                    placeholder="e.g. Al-Madina Project Site / Hub"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Optional Material Items Dispatched (Stock Reduction) */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Layers className="h-4 w-4 text-indigo-600" />
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      Dispatched Material Items (اسٹاک آئٹم کمی - اگر کوئی مال لے جا رہے ہوں)
+                    </h4>
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Stock automatically decreases in Inventory Ledger
+                  </span>
+                </div>
+
+                {/* Quick Add Bar */}
+                <div className="flex flex-wrap items-center gap-2 bg-white p-2.5 rounded-lg border border-slate-200">
+                  <div className="flex-1 min-w-[180px]">
+                    <SearchableSelect
+                      options={[
+                        { value: '', label: '-- Quick Pick Item --' },
+                        ...items.map(i => {
+                          const stock = balances?.itemStocks[i.id] || 0;
+                          return {
+                            value: i.id,
+                            label: i.name,
+                            subLabel: `Stock: ${stock} ${i.unit} • Rate: Rs. ${i.saleRate}`,
+                            searchTerms: `${i.name} ${i.unit}`
+                          };
+                        })
+                      ]}
+                      value={quickItemId}
+                      onChange={val => {
+                        setQuickItemId(val);
+                        const it = items.find(i => i.id === val);
+                        if (it) setQuickRate(it.saleRate);
+                      }}
+                      placeholder="Select Material Item..."
+                    />
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Qty"
+                    value={quickQty === 0 ? '' : quickQty}
+                    onChange={e => setQuickQty(e.target.value === '' ? 0 : Number(e.target.value))}
+                    className="w-20 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Rate"
+                    value={quickRate === 0 ? '' : quickRate}
+                    onChange={e => setQuickRate(e.target.value === '' ? 0 : Number(e.target.value))}
+                    className="w-24 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleQuickAddItem}
+                    className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition"
+                  >
+                    + Add Item
+                  </button>
+                </div>
+
+                {/* Items List Rows */}
+                <div className="space-y-2">
+                  {tripItems.map((row, idx) => (
+                    <div key={row.id} className="grid grid-cols-12 gap-2 items-center bg-white p-2 rounded-lg border border-slate-200">
+                      <div className="col-span-5">
+                        <select
+                          value={row.itemId}
+                          onChange={e => handleItemChange(idx, 'itemId', e.target.value)}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:border-indigo-500"
+                        >
+                          <option value="">-- No Material Selected --</option>
+                          {items.map(i => (
+                            <option key={i.id} value={i.id}>
+                              {i.name} (Stock: {balances?.itemStocks[i.id] || 0} {i.unit})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-2">
+                        <input
+                          type="number"
+                          min="0"
+                          value={row.quantity === 0 ? '' : row.quantity}
+                          onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
+                          placeholder="Qty"
+                          className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs text-right font-semibold"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <input
+                          type="number"
+                          min="0"
+                          value={row.rate === 0 ? '' : row.rate}
+                          onChange={e => handleItemChange(idx, 'rate', e.target.value)}
+                          placeholder="Rate"
+                          className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs text-right font-semibold"
+                        />
+                      </div>
+                      <div className="col-span-2 text-right font-bold text-xs text-slate-800">
+                        Rs. {(row.amount || 0).toLocaleString()}
+                      </div>
+                      <div className="col-span-1 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItemRow(idx)}
+                          className="text-slate-400 hover:text-rose-600 transition"
+                        >
+                          <Trash className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Trip Expenses Breakdown (Toll, Diesel, Food, Mistri) */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Trip Expenses &amp; Commissions (ٹرپ اخراجات اور کمیشن)
+                  </h4>
+                  <span className="text-xs font-bold text-rose-600">
+                    Total: Rs. {totalExpenses.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 bg-white p-2.5 rounded-lg border border-slate-200">
+                  <select
+                    value={currentExpCategory}
+                    onChange={e => setCurrentExpCategory(e.target.value)}
+                    className="px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
+                  >
+                    {categoriesList.map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Amount (Rs.)"
+                    value={currentExpAmount === 0 ? '' : currentExpAmount}
+                    onChange={e => setCurrentExpAmount(e.target.value === '' ? 0 : Number(e.target.value))}
+                    className="w-28 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Description / Remarks"
+                    value={currentExpDesc}
+                    onChange={e => setCurrentExpDesc(e.target.value)}
+                    className="flex-1 min-w-[150px] px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddExpense}
+                    className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition"
+                  >
+                    + Add Expense
+                  </button>
+                </div>
+
+                {expenses.length > 0 && (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {expenses.map((exp, idx) => (
+                      <span key={idx} className="inline-flex items-center space-x-1.5 bg-rose-50 border border-rose-200 text-rose-800 text-xs px-2.5 py-1 rounded-lg">
+                        <span className="font-bold">{exp.category}:</span>
+                        <span>Rs. {exp.amount.toLocaleString()}</span>
+                        {exp.description && <span className="text-slate-500">({exp.description})</span>}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveExpense(idx)}
+                          className="text-rose-400 hover:text-rose-700 ml-1 font-bold"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Bottom Split Section: Customer & Payment on Golden Card vs Charges Summary */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                {/* Left Charges Summary */}
+                <div className="lg:col-span-6 space-y-4">
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider border-b pb-2">
+                      Charges &amp; Freight Summary
+                    </h4>
+
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-slate-600">Material Items Total:</span>
+                      <span className="font-bold text-slate-800">Rs. {materialTotal.toLocaleString()}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-sm">
+                      <label className="text-indigo-900 font-bold">
+                        {billingType === 'hourly' ? 'Vehicle Hourly Rent (روپے):' : 'Vehicle Freight / Charges (روپے):'}
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={vehicleCharges === 0 ? '' : vehicleCharges}
+                        onChange={e => setVehicleCharges(e.target.value === '' ? 0 : Number(e.target.value))}
+                        className="w-32 px-3 py-1.5 border-2 border-indigo-200 rounded-lg text-sm text-right font-black text-indigo-900 bg-indigo-50/40"
+                      />
+                    </div>
+
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-slate-600">Trip Expenses &amp; Commissions:</span>
+                      <span className="font-bold text-rose-600">Rs. {totalExpenses.toLocaleString()}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-sm">
+                      <label className="text-slate-600 font-medium">Discount Allowed (Rs.):</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={discount === 0 ? '' : discount}
+                        onChange={e => setDiscount(e.target.value === '' ? 0 : Number(e.target.value))}
+                        className="w-32 px-3 py-1.5 border border-slate-300 rounded-lg text-sm text-right font-semibold"
+                      />
+                    </div>
+
+                    <div className="border-t-2 border-slate-800 pt-3 flex justify-between items-center">
+                      <span className="text-base font-black text-slate-900">NET GRAND TOTAL:</span>
+                      <span className="text-xl font-black text-indigo-700">Rs. {grandTotal.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Golden Card: Customer Profile & Payment */}
+                <div className="lg:col-span-6 bg-gradient-to-br from-amber-50 to-amber-100/70 border-2 border-amber-300 rounded-xl p-4 shadow-sm flex flex-col justify-between space-y-4">
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between border-b border-amber-200/90 pb-2">
+                    <div className="flex items-center justify-between border-b border-amber-200 pb-2">
                       <div className="flex items-center space-x-2">
                         <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center font-bold shadow-sm">
                           <UserCheck className="h-4 w-4" />
                         </div>
                         <div>
-                          <h4 className="text-sm font-bold text-amber-950">Customer Profile</h4>
-                          <p className="text-[11px] text-amber-800/80">Account details & live ledger balance</p>
+                          <h4 className="text-sm font-bold text-amber-950">Customer Account</h4>
+                          <p className="text-[11px] text-amber-800/80">Select customer or default walk-in</p>
                         </div>
                       </div>
-                      {/* Live Balance Tag */}
                       <div>
                         {custBalInfo.outstanding > 0 ? (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black bg-rose-100 text-rose-800 border border-rose-300 shadow-sm animate-pulse">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black bg-rose-100 text-rose-800 border border-rose-300">
                             Outstanding: Rs. {custBalInfo.outstanding.toLocaleString()}
                           </span>
                         ) : custBalInfo.advance > 0 ? (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-sm">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
                             Advance: Rs. {custBalInfo.advance.toLocaleString()}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
                             Clear: Rs. 0
                           </span>
                         )}
                       </div>
                     </div>
 
-                    {/* Customer Selection */}
-                    <div>
-                      <label className="block text-xs font-bold text-amber-950 mb-1">
-                        Select Customer (Optional: Defaults to Walk-in)
-                      </label>
-                      <SearchableSelect
-                        options={[
-                          {
-                            value: 'walk-in',
-                            label: 'Walk-in Customer (General)',
-                            subLabel: 'Spot / Counter Customer',
-                            searchTerms: 'walk in walkin cash general',
-                          },
-                          ...customers.filter(c => c.id !== 'walk-in').map(c => {
-                            const bal = balances?.customerBalances[c.id] || { outstanding: 0, advance: 0 };
-                            const curBal = bal.outstanding > 0 ? bal.outstanding : bal.advance;
-                            const status = bal.outstanding > 0 ? 'Outstanding' : (bal.advance > 0 ? 'Advance' : 'Clear');
-                            const badgeColor = bal.outstanding > 0 ? 'rose' : (bal.advance > 0 ? 'emerald' : 'slate');
-                            return {
-                              value: c.id,
-                              label: c.name,
-                              subLabel: `${c.phone ? `Ph: ${c.phone}` : ''}${c.area ? ` • ${c.area}` : ''}`,
-                              badge: `Rs. ${curBal.toLocaleString()} (${status})`,
-                              badgeColor: badgeColor as any,
-                              searchTerms: `${c.name} ${c.id} ${c.phone || ''} ${c.area || ''}`,
-                            };
-                          })
-                        ]}
-                        value={customerId}
-                        onChange={val => setCustomerId(val)}
-                        placeholder="-- Search or Pick Customer --"
-                      />
+                    <SearchableSelect
+                      options={[
+                        { value: 'walk-in', label: 'Walk-in Customer (General Counter Sales)', searchTerms: 'walk in cash counter' },
+                        ...customers.filter(c => c.id !== 'walk-in').map(c => {
+                          const bal = balances?.customerBalances[c.id] || { outstanding: 0, advance: 0 };
+                          const curBal = bal.outstanding > 0 ? bal.outstanding : bal.advance;
+                          const status = bal.outstanding > 0 ? 'Outstanding' : (bal.advance > 0 ? 'Advance' : 'Clear');
+                          return {
+                            value: c.id,
+                            label: c.name,
+                            subLabel: `${c.phone ? `Ph: ${c.phone}` : ''}${c.area ? ` • ${c.area}` : ''}`,
+                            badge: `Rs. ${curBal.toLocaleString()} (${status})`,
+                            badgeColor: (bal.outstanding > 0 ? 'rose' : bal.advance > 0 ? 'emerald' : 'slate') as any,
+                            searchTerms: `${c.name} ${c.phone || ''} ${c.area || ''}`
+                          };
+                        })
+                      ]}
+                      value={customerId}
+                      onChange={val => setCustomerId(val)}
+                      placeholder="-- Select Customer --"
+                    />
+
+                    {/* Payment Mode Buttons */}
+                    <div className="grid grid-cols-3 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentType('Cash');
+                          if (!isPaidTouched) setPaidAmount(grandTotal);
+                        }}
+                        className={`py-2 px-1 text-xs font-bold rounded-lg border text-center transition ${
+                          paymentType === 'Cash'
+                            ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm'
+                            : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50'
+                        }`}
+                      >
+                        💵 Cash
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentType('Credit');
+                          if (!isPaidTouched) setPaidAmount(0);
+                        }}
+                        className={`py-2 px-1 text-xs font-bold rounded-lg border text-center transition ${
+                          paymentType === 'Credit'
+                            ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm'
+                            : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50'
+                        }`}
+                      >
+                        📋 Credit (Udhaar)
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentType('Bank');
+                          if (!isPaidTouched) setPaidAmount(grandTotal);
+                        }}
+                        className={`py-2 px-1 text-xs font-bold rounded-lg border text-center transition ${
+                          paymentType === 'Bank'
+                            ? 'bg-cyan-600 text-white border-cyan-700 shadow-sm'
+                            : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50'
+                        }`}
+                      >
+                        🏦 Bank Transfer
+                      </button>
                     </div>
 
-                    {/* Customer Info Box */}
-                    <div className="grid grid-cols-2 gap-2 text-xs bg-white/90 p-2.5 rounded-lg border border-amber-200/80 text-amber-950">
-                      <div>
-                        <span className="text-amber-800/70 block text-[10px] uppercase font-bold">Phone Number</span>
-                        <span className="font-semibold">{selectedCust?.phone || '—'}</span>
-                      </div>
-                      <div>
-                        <span className="text-amber-800/70 block text-[10px] uppercase font-bold">Area / Address</span>
-                        <span className="font-semibold">{selectedCust?.area || selectedCust?.address || '—'}</span>
-                      </div>
-                    </div>
-
-                    {/* Payment Mode & Amount Paid Section */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="block text-xs font-bold text-amber-950">
-                          Payment Mode
-                        </label>
-                        <div className="text-right">
-                          <span className="text-[10px] text-slate-500 uppercase font-semibold">Total Bill: </span>
-                          <span className="text-xs font-black text-indigo-700">Rs. {grandTotal.toLocaleString()}</span>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPaymentType('Cash');
-                            if (!isPaidTouched) setPaidAmount(grandTotal);
-                          }}
-                          className={`py-2 px-1 text-xs font-bold rounded-lg border text-center transition flex flex-col items-center justify-center space-y-0.5 ${
-                            paymentType === 'Cash'
-                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-sm'
-                              : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50'
-                          }`}
-                        >
-                          <span className="text-sm">💵</span>
-                          <span>Pay as Cash</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPaymentType('Credit');
-                            if (!isPaidTouched) setPaidAmount(0);
-                          }}
-                          className={`py-2 px-1 text-xs font-bold rounded-lg border text-center transition flex flex-col items-center justify-center space-y-0.5 ${
-                            paymentType === 'Credit'
-                              ? 'bg-indigo-600 text-white border-indigo-700 shadow-sm'
-                              : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50'
-                          }`}
-                        >
-                          <span className="text-sm">📋</span>
-                          <span>Pay on Credit</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPaymentType('Bank');
-                            if (!isPaidTouched) setPaidAmount(grandTotal);
-                          }}
-                          className={`py-2 px-1 text-xs font-bold rounded-lg border text-center transition flex flex-col items-center justify-center space-y-0.5 ${
-                            paymentType === 'Bank'
-                              ? 'bg-cyan-600 text-white border-cyan-700 shadow-sm'
-                              : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-50'
-                          }`}
-                        >
-                          <span className="text-sm">🏦</span>
-                          <span>Bank Deposit</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Target Bank selector if Bank payment */}
                     {paymentType === 'Bank' && (
-                      <div className="bg-white/95 p-2.5 rounded-lg border border-cyan-300 space-y-1">
-                        <label className="block text-xs font-bold text-cyan-950">
-                          Receiving Bank Account
-                        </label>
-                        <select
-                          value={bankId}
-                          onChange={e => setBankId(e.target.value)}
-                          className="w-full px-3 py-1.5 bg-white border border-cyan-300 rounded-lg text-xs font-semibold focus:outline-none focus:border-cyan-500"
-                        >
-                          {banks.map(b => (
-                            <option key={b.id} value={b.id}>{b.name} ({b.accountNumber || 'Account'})</option>
-                          ))}
-                        </select>
-                      </div>
+                      <select
+                        value={bankId}
+                        onChange={e => setBankId(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-cyan-300 rounded-lg text-xs font-semibold"
+                      >
+                        {banks.map(b => (
+                          <option key={b.id} value={b.id}>{b.name} ({b.accountNumber || 'Account'})</option>
+                        ))}
+                      </select>
                     )}
 
-                    {/* Cash Received / Amount Paid Input Box */}
-                    <div className="bg-white p-3 rounded-lg border-2 border-amber-300/90 shadow-xs space-y-2">
+                    {/* Paid Amount Input */}
+                    <div className="bg-white p-3 rounded-lg border border-amber-300 space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="block text-xs font-black text-slate-800 uppercase tracking-wide">
-                          Amount Paid / Cash Received (Rs.)
+                          Amount Received (روپے)
                         </label>
                         <div className="flex space-x-1">
                           <button
                             type="button"
-                            onClick={() => {
-                              setPaidAmount(grandTotal);
-                              setIsPaidTouched(true);
-                            }}
-                            className="px-2 py-0.5 text-[10px] bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded font-bold border border-emerald-300 transition"
-                            title="Customer pays exact full bill"
+                            onClick={() => { setPaidAmount(grandTotal); setIsPaidTouched(true); }}
+                            className="px-2 py-0.5 text-[10px] bg-emerald-100 text-emerald-800 rounded font-bold hover:bg-emerald-200"
                           >
                             Full: Rs. {grandTotal.toLocaleString()}
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
-                              setPaidAmount(0);
-                              setIsPaidTouched(true);
-                            }}
-                            className="px-2 py-0.5 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-bold border border-slate-300 transition"
-                            title="Zero paid (All credit)"
+                            onClick={() => { setPaidAmount(0); setIsPaidTouched(true); }}
+                            className="px-2 py-0.5 text-[10px] bg-slate-100 text-slate-700 rounded font-bold hover:bg-slate-200"
                           >
                             Rs. 0
                           </button>
                         </div>
                       </div>
 
-                      <div className="relative">
-                        <span className="absolute left-3 top-2 text-sm font-bold text-slate-400">Rs.</span>
-                        <input
-                          type="number"
-                          min="0"
-                          placeholder="0"
-                          value={paidAmount === 0 ? '' : paidAmount}
-                          onChange={e => {
-                            setPaidAmount(e.target.value === '' ? 0 : Number(e.target.value));
-                            setIsPaidTouched(true);
-                          }}
-                          className="w-full pl-10 pr-3 py-2 border-2 border-indigo-300 rounded-lg text-base font-black text-indigo-900 focus:outline-none focus:border-indigo-600 bg-white"
-                        />
-                      </div>
+                      <input
+                        type="number"
+                        min="0"
+                        value={paidAmount === 0 ? '' : paidAmount}
+                        onChange={e => {
+                          setPaidAmount(e.target.value === '' ? 0 : Number(e.target.value));
+                          setIsPaidTouched(true);
+                        }}
+                        className="w-full px-3 py-2 border-2 border-indigo-300 rounded-lg text-base font-black text-indigo-900 focus:outline-none focus:border-indigo-600 bg-white"
+                        placeholder="0"
+                      />
 
-                      {/* Remaining Balance & Advance Calculation Display */}
                       <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
                         {paidAmount < grandTotal ? (
-                          <>
-                            <span className="text-slate-600 font-medium">Remaining Unpaid (Credit / Payable):</span>
-                            <span className="font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                              Rs. {(grandTotal - paidAmount).toLocaleString()}
-                            </span>
-                          </>
+                          <span className="font-black text-rose-600">
+                            Unpaid Due (Credit): Rs. {(grandTotal - paidAmount).toLocaleString()}
+                          </span>
                         ) : paidAmount > grandTotal ? (
-                          <>
-                            <span className="text-emerald-700 font-semibold">Extra Overpayment (Advance):</span>
-                            <span className="font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                              +Rs. {(paidAmount - grandTotal).toLocaleString()}
-                            </span>
-                          </>
+                          <span className="font-black text-emerald-700">
+                            Overpayment (Advance): +Rs. {(paidAmount - grandTotal).toLocaleString()}
+                          </span>
                         ) : (
-                          <>
-                            <span className="text-emerald-700 font-medium">Payment Status:</span>
-                            <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                              ✓ Paid in Full (Remaining: Rs. 0)
-                            </span>
-                          </>
+                          <span className="font-bold text-emerald-700">✓ Fully Paid (Clear)</span>
                         )}
                       </div>
                     </div>
                   </div>
-
-                  {/* Real-time Ledger Impact Projection */}
-                  <div className="p-2.5 rounded-lg text-xs border font-medium">
-                    {paidAmount < grandTotal ? (
-                      selectedCust && selectedCust.id !== 'walk-in' ? (
-                        currentAdvance > 0 ? (
-                          (grandTotal - paidAmount) <= currentAdvance ? (
-                            <div className="bg-emerald-50 text-emerald-900 border border-emerald-300 p-2 rounded flex items-start space-x-2">
-                              <UserCheck className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
-                              <div>
-                                <p className="font-bold">Using Customer Advance</p>
-                                <p className="text-[11px] text-emerald-800">
-                                  Unpaid balance of Rs. {(grandTotal - paidAmount).toLocaleString()} will be deducted from customer advance (Rs. {currentAdvance.toLocaleString()}). Remaining advance: <span className="font-bold text-emerald-900">Rs. {projectedAdvance.toLocaleString()}</span>.
-                                </p>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="bg-amber-50 text-amber-950 border border-amber-300 p-2 rounded flex items-start space-x-2">
-                              <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-                              <div>
-                                <p className="font-bold">Advance Depleted + Udhaar Added</p>
-                                <p className="text-[11px] text-amber-900">
-                                  Unpaid balance (Rs. {(grandTotal - paidAmount).toLocaleString()}) uses all Rs. {currentAdvance.toLocaleString()} advance. Remaining <span className="font-bold text-rose-700">Rs. {(grandTotal - paidAmount - currentAdvance).toLocaleString()}</span> increases customer Outstanding.
-                                </p>
-                              </div>
-                            </div>
-                          )
-                        ) : (
-                          <div className="bg-rose-50 text-rose-950 border border-rose-300 p-2 rounded flex items-start space-x-2">
-                            <ShieldAlert className="h-4 w-4 text-rose-600 mt-0.5 shrink-0" />
-                            <div>
-                              <p className="font-bold">Credit Sale (Added to Outstanding)</p>
-                              <p className="text-[11px] text-rose-800">
-                                Unpaid balance of Rs. {(grandTotal - paidAmount).toLocaleString()} increases customer Outstanding. New Outstanding: <span className="font-bold text-rose-900">Rs. {projectedOutstanding.toLocaleString()}</span>.
-                              </p>
-                            </div>
-                          </div>
-                        )
-                      ) : (
-                        <div className="bg-amber-50 text-amber-900 border border-amber-300 p-2 rounded flex items-start space-x-2">
-                          <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-                          <p className="text-[11px]">
-                            <span className="font-bold">Walk-in Customer:</span> Rs. {paidAmount.toLocaleString()} paid. Remaining Rs. {(grandTotal - paidAmount).toLocaleString()} unpaid. Select a registered customer account to track this credit ledger.
-                          </p>
-                        </div>
-                      )
-                    ) : paidAmount > grandTotal ? (
-                      selectedCust && selectedCust.id !== 'walk-in' ? (
-                        <div className="bg-emerald-50 text-emerald-950 border border-emerald-300 p-2 rounded flex items-start space-x-2">
-                          <UserCheck className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
-                          <div>
-                            <p className="font-bold">Excess Payment Goes to Customer Advance</p>
-                            <p className="text-[11px] text-emerald-800">
-                              Customer gave Rs. {(paidAmount - grandTotal).toLocaleString()} extra cash. This excess will be credited to their account as Advance. New Advance: <span className="font-bold text-emerald-900">Rs. {projectedAdvance.toLocaleString()}</span>.
-                            </p>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="bg-emerald-50 text-emerald-950 border border-emerald-300 p-2 rounded flex items-start space-x-2">
-                          <Wallet className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
-                          <p className="text-[11px]">
-                            <span className="font-bold">Walk-in Overpayment:</span> Customer paid Rs. {(paidAmount - grandTotal).toLocaleString()} extra.
-                          </p>
-                        </div>
-                      )
-                    ) : (
-                      <div className="bg-white/90 text-slate-700 border border-amber-200/90 p-2 rounded flex items-center space-x-2">
-                        <Wallet className="h-4 w-4 text-emerald-600 shrink-0" />
-                        <p className="text-[11px]">
-                          <span className="font-bold text-slate-800">Full Payment Received:</span> Rs. {paidAmount.toLocaleString()} received. Customer ledger balance remains unaffected.
-                        </p>
-                      </div>
-                    )}
-                  </div>
                 </div>
               </div>
 
-              {/* Middle Section: Dynamic Dispatched Materials Table & Quick Add */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-indigo-600"></div>
-                    <h4 className="text-sm font-bold text-slate-800">Dispatched Material Items</h4>
-                    <span className="text-xs text-slate-500 font-mono">({tripItems.length} {tripItems.length === 1 ? 'item' : 'items'})</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAddItemRow}
-                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition shadow-sm self-start sm:self-auto"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>+ Add Item Row</span>
-                  </button>
-                </div>
-
-                {/* Quick Add Material Bar (Prominent, unclipped selector) */}
-                <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs">
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                    <div className="sm:col-span-5">
-                      <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                        Select Material Item to Add
-                      </label>
-                      <SearchableSelect
-                        options={items.map(i => {
-                          const st = balances?.itemStocks[i.id] !== undefined ? balances.itemStocks[i.id] : i.currentStock;
-                          return {
-                            value: i.id,
-                            label: `${i.name} (${i.unit})`,
-                            subLabel: `Stock: ${st.toLocaleString()} ${i.unit}`,
-                            badge: `Rs. ${i.saleRate.toLocaleString()} / ${i.unit}`,
-                            badgeColor: 'emerald',
-                            searchTerms: `${i.name} ${i.id} ${i.unit}`,
-                          };
-                        })}
-                        value={quickItemId}
-                        onChange={val => {
-                          setQuickItemId(val);
-                          const itm = items.find(i => i.id === val);
-                          if (itm) setQuickRate(itm.saleRate);
-                        }}
-                        placeholder="-- Choose Material to Add --"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                        Quantity
-                      </label>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        placeholder="0"
-                        value={quickQty === 0 ? '' : quickQty}
-                        onChange={e => setQuickQty(e.target.value === '' ? 0 : Number(e.target.value))}
-                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-sm font-semibold focus:outline-none focus:border-indigo-500 bg-white text-right"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">
-                        Rate (Rs.)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        placeholder="0"
-                        value={quickRate === 0 ? '' : quickRate}
-                        onChange={e => setQuickRate(e.target.value === '' ? 0 : Number(e.target.value))}
-                        className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-sm font-semibold focus:outline-none focus:border-indigo-500 bg-white text-right"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-3">
-                      <button
-                        type="button"
-                        onClick={handleQuickAddItem}
-                        className="w-full py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center justify-center space-x-1.5 h-9"
-                      >
-                        <Plus className="h-4 w-4" />
-                        <span>Add to Trip Table</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Table of Dispatched Materials */}
-                <div className="overflow-x-auto bg-white rounded-lg border border-slate-200 shadow-sm">
-                  <table className="min-w-full divide-y divide-slate-200 text-xs">
-                    <thead className="bg-slate-100 text-slate-600 font-bold uppercase">
-                      <tr>
-                        <th className="px-3 py-2.5 text-center w-10">#</th>
-                        <th className="px-3 py-2.5 text-left min-w-[240px]">Material Item</th>
-                        <th className="px-3 py-2.5 text-center w-20">Unit</th>
-                        <th className="px-3 py-2.5 text-center min-w-[110px]">Live Stock</th>
-                        <th className="px-3 py-2.5 text-right w-28">Quantity</th>
-                        <th className="px-3 py-2.5 text-right w-28">Rate (Rs.)</th>
-                        <th className="px-3 py-2.5 text-right min-w-[110px]">Total (Rs.)</th>
-                        <th className="px-3 py-2.5 text-center w-12"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {tripItems.map((row, idx) => {
-                        const itemStock = (row.itemId && balances?.itemStocks[row.itemId] !== undefined)
-                          ? balances.itemStocks[row.itemId]
-                          : (items.find(i => i.id === row.itemId)?.currentStock || 0);
-
-                        return (
-                          <tr key={row.id} className="hover:bg-slate-50/70 transition">
-                            <td className="px-3 py-2.5 text-center font-mono font-bold text-slate-400">
-                              {idx + 1}
-                            </td>
-                            <td className="px-3 py-2.5">
-                              {/* Native dropdown that NEVER gets clipped by overflow */}
-                              <select
-                                value={row.itemId}
-                                onChange={e => handleItemChange(idx, 'itemId', e.target.value)}
-                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500 bg-white text-slate-800"
-                                required
-                              >
-                                <option value="">-- Choose Material ({items.length} in stock) --</option>
-                                {items.map(i => {
-                                  const st = balances?.itemStocks[i.id] !== undefined ? balances.itemStocks[i.id] : i.currentStock;
-                                  return (
-                                    <option key={i.id} value={i.id}>
-                                      {i.name} ({i.unit}) — Stock: {st.toLocaleString()} {i.unit} • Rs. {i.saleRate.toLocaleString()}
-                                    </option>
-                                  );
-                                })}
-                              </select>
-                            </td>
-                            <td className="px-3 py-2.5 text-center">
-                              <span className="px-2 py-1 bg-slate-100 text-slate-700 rounded font-semibold text-[11px]">
-                                {row.unit || '—'}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2.5 text-center font-mono font-semibold">
-                              {row.itemId ? (
-                                <span className={`px-2 py-0.5 rounded text-[11px] ${itemStock > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
-                                  {itemStock.toLocaleString()} {row.unit}
-                                </span>
-                              ) : (
-                                <span className="text-slate-400">—</span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2.5 text-right">
-                              <input
-                                type="number"
-                                min="0.01"
-                                step="0.01"
-                                required
-                                placeholder="0"
-                                value={row.quantity === 0 ? '' : row.quantity}
-                                onChange={e => handleItemChange(idx, 'quantity', e.target.value === '' ? 0 : Number(e.target.value))}
-                                className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-right font-semibold focus:outline-none focus:border-indigo-500"
-                              />
-                            </td>
-                            <td className="px-3 py-2.5 text-right">
-                              <input
-                                type="number"
-                                min="0"
-                                required
-                                placeholder="0"
-                                value={row.rate === 0 ? '' : row.rate}
-                                onChange={e => handleItemChange(idx, 'rate', e.target.value === '' ? 0 : Number(e.target.value))}
-                                className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-right font-semibold focus:outline-none focus:border-indigo-500"
-                              />
-                            </td>
-                            <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-800">
-                              Rs. {Number(row.amount || 0).toLocaleString()}
-                            </td>
-                            <td className="px-3 py-2.5 text-center">
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveItemRow(idx)}
-                                disabled={tripItems.length <= 1}
-                                className="p-1 text-slate-400 hover:text-rose-600 disabled:opacity-30 disabled:hover:text-slate-400 transition"
-                                title={tripItems.length <= 1 ? "At least one item row is required" : "Remove line"}
-                              >
-                                <Trash className="h-4 w-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot className="bg-slate-50 border-t border-slate-200 font-bold text-slate-700">
-                      <tr>
-                        <td colSpan={6} className="px-3 py-2.5 text-right uppercase text-[11px] tracking-wider">
-                          Material Subtotal ({tripItems.length} {tripItems.length === 1 ? 'item' : 'items'}):
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-mono text-sm text-indigo-700">
-                          Rs. {materialTotal.toLocaleString()}
-                        </td>
-                        <td></td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-
-              {/* Trip Expenses Multi-Line Panel */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-rose-500"></div>
-                  <h4 className="text-sm font-bold text-slate-800">Add Trip Expenses (Handwritten Categories)</h4>
-                  <span className="text-xs text-slate-500 font-mono">({expenses.length} {expenses.length === 1 ? 'entry' : 'entries'})</span>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                      Expense Category
-                    </label>
-                    <select
-                      value={currentExpCategory}
-                      onChange={e => setCurrentExpCategory(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
-                    >
-                      {categoriesList.map(cat => (
-                        <option key={cat} value={cat}>{cat}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                      Expense Amount (Rs.)
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={currentExpAmount === 0 ? '' : currentExpAmount}
-                      onChange={e => setCurrentExpAmount(e.target.value === '' ? 0 : Number(e.target.value))}
-                      placeholder="0"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2 flex space-x-2 items-end">
-                    <div className="flex-1">
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                        Expense Description (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={currentExpDesc}
-                        onChange={e => setCurrentExpDesc(e.target.value)}
-                        placeholder="e.g. Weighbridge slip, diesel pump"
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleAddExpense}
-                      className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-sm font-bold transition whitespace-nowrap h-9 shadow-sm"
-                    >
-                      + Add Expense
-                    </button>
-                  </div>
-                </div>
-
-                {/* Added Expenses list */}
-                {expenses.length > 0 && (
-                  <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
-                    <table className="min-w-full divide-y divide-slate-100 text-left text-xs">
-                      <thead className="bg-slate-50 text-slate-500 font-semibold uppercase">
-                        <tr>
-                          <th className="px-4 py-2">Category</th>
-                          <th className="px-4 py-2">Description</th>
-                          <th className="px-4 py-2 text-right">Amount</th>
-                          <th className="px-4 py-2 text-right">Remove</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {expenses.map((exp, idx) => (
-                          <tr key={idx}>
-                            <td className="px-4 py-2 font-bold text-slate-700">{exp.category}</td>
-                            <td className="px-4 py-2 text-slate-500">{exp.description || '—'}</td>
-                            <td className="px-4 py-2 text-right font-medium">Rs. {exp.amount.toLocaleString()}</td>
-                            <td className="px-4 py-2 text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveExpense(idx)}
-                                className="text-rose-500 hover:text-rose-700 font-semibold"
-                              >
-                                Remove
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot className="bg-slate-50 border-t border-slate-100 font-bold">
-                        <tr>
-                          <td colSpan={2} className="px-4 py-2 text-right text-slate-600 uppercase text-[11px]">Total Trip Expenses:</td>
-                          <td className="px-4 py-2 text-right text-rose-600 font-mono">Rs. {totalExpenses.toLocaleString()}</td>
-                          <td></td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              {/* Grand summary of calculations */}
-              <div className="bg-slate-900 text-white rounded-xl p-5 grid grid-cols-2 md:grid-cols-5 gap-3 text-center shadow-inner">
-                <div>
-                  <p className="text-[11px] text-slate-400 uppercase font-semibold">Material Total</p>
-                  <p className="text-base font-bold text-white">Rs. {materialTotal.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] text-indigo-300 uppercase font-semibold">Vehicle Charges</p>
-                  <p className="text-base font-bold text-indigo-400">+Rs. {vehicleCharges.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] text-rose-300 uppercase font-semibold">Trip Expenses</p>
-                  <p className="text-base font-bold text-rose-400">+Rs. {totalExpenses.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] text-amber-300 uppercase font-semibold">Discount</p>
-                  <p className="text-base font-bold text-amber-400">-Rs. {discount.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] text-emerald-300 uppercase font-semibold">Final Net Total</p>
-                  <p className="text-lg font-black text-emerald-400">
-                    Rs. {grandTotal.toLocaleString()}
-                  </p>
-                </div>
-              </div>
-
-              {/* Modal Footer / Save Bar */}
-              <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-3">
-                <div className="text-slate-800 text-sm font-bold flex items-center space-x-2">
-                  <span>Total Bill Amount:</span>
-                  <span className="text-indigo-600 text-xl font-black">Rs. {grandTotal.toLocaleString()}</span>
-                  <span className="text-xs text-slate-500 font-medium">({paymentType})</span>
-                </div>
-                <div className="flex space-x-2 w-full sm:w-auto justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setIsFormOpen(false)}
-                    className="px-5 py-2.5 border border-slate-300 text-slate-700 rounded-lg text-sm font-semibold hover:bg-slate-100 transition"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold shadow-md transition"
-                  >
-                    {editingId ? 'Save Trip Changes' : 'Dispatch & Post Trip'}
-                  </button>
-                </div>
+              {/* Form Buttons */}
+              <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setIsFormOpen(false)}
+                  className="px-5 py-2.5 border border-slate-300 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-100 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-md hover:shadow-lg transition flex items-center space-x-2"
+                >
+                  <CheckCircle className="h-4 w-4" />
+                  <span>{editingId ? 'Save & Update Record' : 'Save & Issue Dispatch / Rental Slip'}</span>
+                </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-      {/* Trip View Details Dialog Modal (Screen Only) */}
-      {activeViewTrip && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex justify-center items-start z-50 no-print overflow-y-auto p-4 md:p-8">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-100 w-full max-w-2xl text-xs p-6 space-y-6">
-            <div className="flex justify-between items-center border-b border-slate-200 pb-3">
-              <h3 className="text-sm font-bold text-slate-800 font-mono">Trip Dispatch Details: {activeViewTrip.id.substring(5, 12).toUpperCase()}</h3>
-              <button onClick={() => setActiveViewTrip(null)} className="text-slate-400 hover:text-slate-600 font-bold text-sm">✕</button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 border-b border-slate-100 pb-4">
-              <div className="space-y-1 font-mono">
-                <p className="font-bold text-slate-700">TRIP DETAILS:</p>
-                <p>Trip ID: <span className="font-semibold">{activeViewTrip.id}</span></p>
-                <p>Date: {activeViewTrip.date}</p>
-                <p>Vehicle: {vehicles.find(v => v.id === activeViewTrip.vehicleId)?.number || (activeViewTrip.vehicleId ? activeViewTrip.vehicleId : '— (Direct / None)')} {vehicles.find(v => v.id === activeViewTrip.vehicleId)?.type ? `(${vehicles.find(v => v.id === activeViewTrip.vehicleId)?.type})` : ''}</p>
-                <p>Driver: {activeViewTrip.driverName || '—'}</p>
-                <p>Route: {activeViewTrip.from || '—'} ➔ {activeViewTrip.to || '—'}</p>
-              </div>
-              <div className="space-y-1 font-mono text-right">
-                <p className="font-bold text-slate-700">CUSTOMER DETAILS:</p>
-                <p>Name: <span className="font-semibold">{customers.find(c => c.id === activeViewTrip.customerId)?.name || (activeViewTrip.customerId === 'walk-in' ? 'Walk-in Customer' : activeViewTrip.customerId)}</span></p>
-                <p>Phone: {customers.find(c => c.id === activeViewTrip.customerId)?.phone || 'N/A'}</p>
-                <p>Area: {customers.find(c => c.id === activeViewTrip.customerId)?.area || 'N/A'}</p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <p className="font-bold text-slate-700 font-mono">MATERIAL QUANTITY & RATE:</p>
-              <table className="min-w-full divide-y divide-slate-200 text-left font-mono">
-                <thead className="bg-slate-50 text-slate-600 font-bold">
-                  <tr>
-                    <th className="px-4 py-2">Item Description</th>
-                    <th className="px-4 py-2 text-right">Quantity</th>
-                    <th className="px-4 py-2 text-right">Rate</th>
-                    <th className="px-4 py-2 text-right">Total</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {activeViewTrip.items && activeViewTrip.items.length > 0 ? (
-                    activeViewTrip.items.map((it, idx) => (
-                      <tr key={idx}>
-                        <td className="px-4 py-3 font-semibold">{it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}</td>
-                        <td className="px-4 py-3 text-right">{it.quantity} {it.unit}</td>
-                        <td className="px-4 py-3 text-right">Rs. {it.rate.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right font-bold">Rs. {it.amount.toLocaleString()}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td className="px-4 py-3 font-semibold">{items.find(i => i.id === activeViewTrip.itemId)?.name || activeViewTrip.itemId}</td>
-                      <td className="px-4 py-3 text-right">{activeViewTrip.quantity} {activeViewTrip.unit}</td>
-                      <td className="px-4 py-3 text-right">Rs. {activeViewTrip.rate.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right font-bold">Rs. {activeViewTrip.materialTotal.toLocaleString()}</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {activeViewTrip.expenses && activeViewTrip.expenses.length > 0 && (
-              <div className="space-y-2">
-                <p className="font-bold text-slate-700 font-mono">TRIP EXPENSES:</p>
-                <table className="min-w-full divide-y divide-slate-200 text-left font-mono">
-                  <thead className="bg-slate-50 text-slate-600 font-bold">
-                    <tr>
-                      <th className="px-4 py-2">Category</th>
-                      <th className="px-4 py-2">Description</th>
-                      <th className="px-4 py-2 text-right">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 bg-white">
-                    {activeViewTrip.expenses.map((exp: DBTripExpense, idx: number) => (
-                      <tr key={idx}>
-                        <td className="px-4 py-2 font-semibold">{exp.category}</td>
-                        <td className="px-4 py-2 text-slate-500">{exp.description || '—'}</td>
-                        <td className="px-4 py-2 text-right font-bold">Rs. {exp.amount.toLocaleString()}</td>
-                      </tr>
-                    ))}
-                    <tr className="bg-slate-50 font-bold">
-                      <td colSpan={2} className="px-4 py-2 text-right">Total Expenses:</td>
-                      <td className="px-4 py-2 text-right">Rs. {activeViewTrip.totalExpenses.toLocaleString()}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div className="flex justify-end mt-4">
-              <div className="w-80 space-y-1.5 border-t border-slate-300 pt-3 font-mono text-right">
-                <div className="flex justify-between">
-                  <span>Material Total:</span>
-                  <span>Rs. {activeViewTrip.materialTotal.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Vehicle Charges (Freight):</span>
-                  <span>+Rs. {activeViewTrip.vehicleCharges.toLocaleString()}</span>
-                </div>
-                {activeViewTrip.totalExpenses > 0 && (
-                  <div className="flex justify-between">
-                    <span>Trip Expenses Billed:</span>
-                    <span>+Rs. {activeViewTrip.totalExpenses.toLocaleString()}</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-rose-600">
-                  <span>Discount Allowed:</span>
-                  <span>-Rs. {(activeViewTrip.discount || 0).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between font-bold text-slate-900 border-t border-slate-200 pt-1 text-sm">
-                  <span>Final Net Total:</span>
-                  <span>Rs. {activeViewTrip.grandTotal.toLocaleString()}</span>
-                </div>
-                <div className="border-t border-slate-100 my-1"></div>
-                <div className="flex justify-between font-semibold">
-                  <span>Paid Amount ({activeViewTrip.paymentType}):</span>
-                  <span>Rs. {(activeViewTrip.paidAmount !== undefined ? activeViewTrip.paidAmount : (activeViewTrip.paymentType === 'Cash' || activeViewTrip.paymentType === 'Bank' ? activeViewTrip.grandTotal : 0)).toLocaleString()}</span>
-                </div>
-                {(() => {
-                  const p = activeViewTrip.paidAmount !== undefined ? activeViewTrip.paidAmount : (activeViewTrip.paymentType === 'Cash' || activeViewTrip.paymentType === 'Bank' ? activeViewTrip.grandTotal : 0);
-                  const diff = activeViewTrip.grandTotal - p;
-                  if (diff > 0) {
-                    return (
-                      <div className="flex justify-between text-rose-600 font-bold">
-                        <span>Remaining Due (Credit):</span>
-                        <span>Rs. {diff.toLocaleString()}</span>
-                      </div>
-                    );
-                  } else if (diff < 0) {
-                    return (
-                      <div className="flex justify-between text-emerald-600 font-bold">
-                        <span>Excess Added to Customer Advance:</span>
-                        <span>+Rs. {(-diff).toLocaleString()}</span>
-                      </div>
-                    );
-                  } else {
-                    return (
-                      <div className="flex justify-between text-emerald-600 font-bold">
-                        <span>Payment Status:</span>
-                        <span>Fully Paid</span>
-                      </div>
-                    );
-                  }
-                })()}
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-2 pt-3 border-t border-slate-200 no-print">
-              <button
-                onClick={() => setActiveViewTrip(null)}
-                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-4 py-2 rounded text-xs transition"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => {
-                  setActivePrintJob({ type: 'a4', data: activeViewTrip });
-                  setTimeout(() => {
-                    window.print();
-                    setActivePrintJob(null);
-                  }, 100);
-                }}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded text-xs transition flex items-center space-x-1"
-              >
-                <Printer className="h-3 w-3" />
-                <span>Print A4 Invoice</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActivePrintJob({ type: 'thermal', data: activeViewTrip });
-                  setTimeout(() => {
-                    window.print();
-                    setActivePrintJob(null);
-                  }, 100);
-                }}
-                className="bg-slate-800 hover:bg-slate-950 text-white font-semibold px-4 py-2 rounded text-xs transition flex items-center space-x-1"
-              >
-                <Printer className="h-3 w-3" />
-                <span>Print Thermal Slip</span>
-              </button>
-            </div>
           </div>
         </div>
       )}

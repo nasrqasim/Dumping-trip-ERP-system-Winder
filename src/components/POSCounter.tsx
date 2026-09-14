@@ -3,6 +3,7 @@ import { getAllRecords, DBSale, DBCustomer, DBItem, DBBank } from '../db/firesto
 import { calculateLiveBalances, LiveBalances, saveSaleTransaction } from '../db/transactions';
 import { ShoppingCart, User, Plus, Search, Trash, Printer, History } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
+import Pagination from './Pagination';
 
 interface POSCounterProps {
   preselectedCustomerId?: string;
@@ -27,6 +28,8 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
   const [historyCustomerId, setHistoryCustomerId] = useState('all');
   const [activeViewSale, setActiveViewSale] = useState<DBSale | null>(null);
   const [activePrintJob, setActivePrintJob] = useState<{ type: 'thermal' | 'a4'; data: DBSale } | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   // Form State
   const [customerId, setCustomerId] = useState(preselectedCustomerId || '');
@@ -35,6 +38,8 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
   const [rate, setRate] = useState(0);
   const [discount, setDiscount] = useState(0);
   const [paymentType, setPaymentType] = useState<'Cash' | 'Bank' | 'Credit' | 'Advance'>('Cash');
+  const [paidAmount, setPaidAmount] = useState<number>(0);
+  const [isPaidTouched, setIsPaidTouched] = useState<boolean>(false);
   const [bankId, setBankId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -136,6 +141,10 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
     const nextNum = maxNum + 1;
     const saleId = `${prefix}${String(nextNum).padStart(3, '0')}`;
 
+    const finalPaid = paymentType === 'Credit' 
+      ? (isPaidTouched ? Number(paidAmount) || 0 : 0)
+      : (paymentType === 'Advance' ? 0 : (isPaidTouched ? Number(paidAmount) || 0 : total));
+
     const sale: DBSale = {
       id: saleId,
       date: new Date().toISOString().split('T')[0],
@@ -145,6 +154,8 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
       rate: Number(rate) || 0,
       discount: Number(discount) || 0,
       total: Number(total) || 0,
+      paidAmount: finalPaid,
+      remainingBalance: (Number(total) || 0) - finalPaid,
       paymentType,
       bankId: paymentType === 'Bank' ? bankId : undefined,
     };
@@ -156,6 +167,8 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
       // Reset Form
       setQuantity(0);
       setDiscount(0);
+      setPaidAmount(0);
+      setIsPaidTouched(false);
       alert('POS Counter Sale completed successfully!');
       loadData();
     } catch (err: any) {
@@ -191,6 +204,8 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
     return dateMatch && custMatch;
   });
 
+  const paginatedSales = filteredSales.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   if (loading) {
     return <div className="text-center py-6">Loading POS Counter...</div>;
   }
@@ -199,82 +214,110 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
     <div className="space-y-6">
       {/* Print Job Engine (Only visible during window.print) */}
       {activePrintJob && activePrintJob.type === 'thermal' && (
-        <div className="print-only print-receipt p-4 bg-white text-xs font-mono">
-          <div className="text-center border-b border-dashed border-slate-400 pb-2 mb-2 font-mono">
-            <h2 className="text-sm font-bold">NORANI KANTA ERP</h2>
-            <p className="text-[9px] text-slate-500">POS SALE INVOICE</p>
-            <p className="text-[9px] text-slate-500">ID: {activePrintJob.data.id}</p>
-            <p className="text-[9px] text-slate-500">Date: {activePrintJob.data.date}</p>
+        <div className="print-only print-receipt p-2 bg-white text-black font-mono">
+          <div className="text-center border-b-2 border-dashed border-black pb-2 mb-2">
+            <div className="flex justify-center mb-1">
+              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain mx-auto" />
+            </div>
+            <h2 className="text-sm font-black uppercase tracking-tight text-black">AL-MADINA CONSTRUCTION COMPANY</h2>
+            <p className="text-[11px] font-bold text-black mt-0.5">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+            <p className="text-[10px] font-semibold text-black">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WA)</p>
+            <div className="border-t border-dashed border-black my-1.5"></div>
+            <p className="text-xs font-black uppercase tracking-wider text-black">POS SALES INVOICE</p>
+            <div className="flex justify-between text-xs font-bold text-black mt-1">
+              <span>Invoice #: {activePrintJob.data.id}</span>
+              <span>Date: {activePrintJob.data.date}</span>
+            </div>
           </div>
 
-          <div className="space-y-1 text-[10px] font-mono">
+          <div className="space-y-1 text-xs font-mono text-black border-b border-dashed border-black pb-2 mb-2">
             <div className="flex justify-between">
-              <span className="text-slate-500">Customer:</span>
+              <span className="font-semibold">Customer:</span>
               <span className="font-bold">{customers.find(c => c.id === activePrintJob.data.customerId)?.name || (activePrintJob.data.customerId === 'walk-in' ? 'Walk-in Customer' : activePrintJob.data.customerId)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-500">Payment:</span>
+              <span className="font-semibold">Payment Mode:</span>
               <span className="font-bold">{activePrintJob.data.paymentType}</span>
             </div>
+          </div>
             
-            <table className="w-full text-left border-collapse my-2 font-mono text-[10px]">
-              <thead>
-                <tr className="border-b-2 border-dashed border-slate-400 font-bold uppercase text-slate-800">
-                  <th className="py-1 text-left">Item Description</th>
-                  <th className="py-1 text-right whitespace-nowrap">Qty</th>
-                  <th className="py-1 text-center whitespace-nowrap">Unit</th>
-                  <th className="py-1 text-right whitespace-nowrap">Rate</th>
-                  <th className="py-1 text-right whitespace-nowrap">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-dashed divide-slate-200">
-                <tr>
-                  <td className="py-1 font-semibold text-slate-800 max-w-[85px] break-words">
-                    {items.find(i => i.id === activePrintJob.data.itemId)?.name || activePrintJob.data.itemId}
-                  </td>
-                  <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">{activePrintJob.data.quantity}</td>
-                  <td className="py-1 text-center text-slate-600 whitespace-nowrap">
-                    {items.find(i => i.id === activePrintJob.data.itemId)?.unit || '—'}
-                  </td>
-                  <td className="py-1 text-right text-slate-600 whitespace-nowrap">Rs. {activePrintJob.data.rate.toLocaleString()}</td>
-                  <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">
-                    Rs. {(activePrintJob.data.quantity * activePrintJob.data.rate).toLocaleString()}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <table className="w-full text-left border-collapse my-2 font-mono text-xs text-black">
+            <thead>
+              <tr className="border-b-2 border-dashed border-black font-bold uppercase">
+                <th className="py-1 text-left">Item Description</th>
+                <th className="py-1 text-right whitespace-nowrap">Qty</th>
+                <th className="py-1 text-center whitespace-nowrap">Unit</th>
+                <th className="py-1 text-right whitespace-nowrap">Rate</th>
+                <th className="py-1 text-right whitespace-nowrap">Amount</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-dashed divide-slate-300">
+              <tr>
+                <td className="py-1 font-bold max-w-[85px] break-words">
+                  {items.find(i => i.id === activePrintJob.data.itemId)?.name || activePrintJob.data.itemId}
+                </td>
+                <td className="py-1 text-right font-bold whitespace-nowrap">{activePrintJob.data.quantity}</td>
+                <td className="py-1 text-center font-semibold whitespace-nowrap">
+                  {items.find(i => i.id === activePrintJob.data.itemId)?.unit || '—'}
+                </td>
+                <td className="py-1 text-right font-semibold whitespace-nowrap">Rs. {activePrintJob.data.rate.toLocaleString()}</td>
+                <td className="py-1 text-right font-black whitespace-nowrap">
+                  Rs. {(activePrintJob.data.quantity * activePrintJob.data.rate).toLocaleString()}
+                </td>
+              </tr>
+            </tbody>
+          </table>
 
-            <div className="flex justify-between">
+          <div className="space-y-1 text-xs font-mono text-black">
+            <div className="flex justify-between font-semibold">
               <span>Subtotal:</span>
               <span>Rs. {(activePrintJob.data.quantity * activePrintJob.data.rate).toLocaleString()}</span>
             </div>
-            <div className="flex justify-between text-rose-600">
-              <span>Discount:</span>
-              <span>-Rs. {(activePrintJob.data.discount || 0).toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between font-bold border-t border-dashed border-slate-300 pt-0.5">
-              <span>Net Total:</span>
+            {activePrintJob.data.discount > 0 && (
+              <div className="flex justify-between font-bold">
+                <span>Discount Allowed:</span>
+                <span>-Rs. {(activePrintJob.data.discount || 0).toLocaleString()}</span>
+              </div>
+            )}
+            <div className="flex justify-between font-black text-sm border-t-2 border-b-2 border-double border-black py-1 my-1">
+              <span>NET TOTAL:</span>
               <span>Rs. {activePrintJob.data.total.toLocaleString()}</span>
             </div>
 
-            <div className="border-b border-dashed border-slate-300 my-1"></div>
-
-            <div className="flex justify-between">
-              <span>Paid:</span>
-              <span>Rs. {(activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank') ? activePrintJob.data.total.toLocaleString() : 0}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Outstanding:</span>
-              <span>Rs. {activePrintJob.data.paymentType === 'Credit' ? activePrintJob.data.total.toLocaleString() : 0}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Advance Used:</span>
-              <span>Rs. {activePrintJob.data.paymentType === 'Advance' ? activePrintJob.data.total.toLocaleString() : 0}</span>
-            </div>
+            {(() => {
+              const p = activePrintJob.data.paidAmount !== undefined 
+                ? activePrintJob.data.paidAmount 
+                : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.total : 0);
+              const diff = activePrintJob.data.total - p;
+              return (
+                <>
+                  <div className="flex justify-between font-semibold pt-1">
+                    <span>Paid Amount:</span>
+                    <span className="font-black">Rs. {p.toLocaleString()}</span>
+                  </div>
+                  {diff > 0 ? (
+                    <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
+                      <span>Remaining Outstanding:</span>
+                      <span>Rs. {diff.toLocaleString()}</span>
+                    </div>
+                  ) : diff < 0 ? (
+                    <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
+                      <span>Advance Credited:</span>
+                      <span>+Rs. {(-diff).toLocaleString()}</span>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between font-bold pt-0.5">
+                      <span>Payment Status:</span>
+                      <span>✓ Fully Paid (Clear)</span>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
-          <div className="print-footer text-center mt-6 text-[9px] font-mono">
-            Software by Roonjha Developer - 03152914836
+          <div className="print-footer text-center mt-4 text-[10px] font-bold font-mono">
+            Software by Roonjha Developers - 03152914836
           </div>
         </div>
       )}
@@ -282,9 +325,15 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
       {activePrintJob && activePrintJob.type === 'a4' && (
         <div className="print-only print-a4 p-8 bg-white font-mono text-xs">
           <div className="text-center border-b border-slate-300 pb-4 mb-6">
-            <h1 className="text-xl font-bold">NORANI KANTA & MATERIALS SUPPLY ERP</h1>
-            <p className="text-xs text-slate-500 mt-1">POS Billing Invoice</p>
-            <p className="text-xs text-slate-500">Ph: 03152914836 | Software by Roonjha Developer</p>
+            <div className="flex items-center justify-center space-x-3 mb-2">
+              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+              <div>
+                <h1 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h1>
+                <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul & Son's (03458829298)</p>
+                <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+              </div>
+            </div>
+            <p className="text-xs font-bold text-slate-500 mt-1 uppercase tracking-wider">POS Billing Invoice</p>
           </div>
 
           <div className="grid grid-cols-2 gap-4 mb-6">
@@ -336,23 +385,41 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
                 <span>Rs. {activePrintJob.data.total.toLocaleString()}</span>
               </div>
               <div className="border-t border-slate-100 my-1"></div>
-              <div className="flex justify-between font-semibold">
-                <span>Paid (Via {activePrintJob.data.paymentType}):</span>
-                <span>Rs. {(activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank') ? activePrintJob.data.total.toLocaleString() : 0}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Remaining Outstanding:</span>
-                <span>Rs. {activePrintJob.data.paymentType === 'Credit' ? activePrintJob.data.total.toLocaleString() : 0}</span>
-              </div>
-              <div className="flex justify-between text-indigo-600">
-                <span>Customer Advance Used:</span>
-                <span>Rs. {activePrintJob.data.paymentType === 'Advance' ? activePrintJob.data.total.toLocaleString() : 0}</span>
-              </div>
+              {(() => {
+                const p = activePrintJob.data.paidAmount !== undefined 
+                  ? activePrintJob.data.paidAmount 
+                  : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.total : 0);
+                const diff = activePrintJob.data.total - p;
+                return (
+                  <>
+                    <div className="flex justify-between font-semibold">
+                      <span>Paid Amount (Via {activePrintJob.data.paymentType}):</span>
+                      <span>Rs. {p.toLocaleString()}</span>
+                    </div>
+                    {diff > 0 ? (
+                      <div className="flex justify-between text-rose-600 font-bold">
+                        <span>Remaining Outstanding:</span>
+                        <span>Rs. {diff.toLocaleString()}</span>
+                      </div>
+                    ) : diff < 0 ? (
+                      <div className="flex justify-between text-emerald-600 font-bold">
+                        <span>Customer Advance Credited:</span>
+                        <span>+Rs. {(-diff).toLocaleString()}</span>
+                      </div>
+                    ) : (
+                      <div className="flex justify-between text-emerald-600 font-bold">
+                        <span>Payment Status:</span>
+                        <span>Fully Paid (Clear)</span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
 
           <div className="print-footer text-center mt-12 text-slate-500 text-xs">
-            Software by Roonjha Developer - 03152914836
+            Software by Roonjha Developers - 03152914836
           </div>
         </div>
       )}
@@ -506,7 +573,20 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
                   </label>
                   <select
                     value={paymentType}
-                    onChange={e => setPaymentType(e.target.value as any)}
+                    onChange={e => {
+                      const newType = e.target.value as any;
+                      setPaymentType(newType);
+                      if (newType === 'Credit') {
+                        setPaidAmount(0);
+                        setIsPaidTouched(true);
+                      } else if (newType === 'Cash' || newType === 'Bank') {
+                        setPaidAmount(grandTotal);
+                        setIsPaidTouched(false);
+                      } else if (newType === 'Advance') {
+                        setPaidAmount(0);
+                        setIsPaidTouched(true);
+                      }
+                    }}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
                   >
                     <option value="Cash">Cash Sale</option>
@@ -516,7 +596,7 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
                   </select>
                 </div>
 
-                {paymentType === 'Bank' && (
+                {paymentType === 'Bank' ? (
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
                       Target Bank
@@ -531,8 +611,94 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
                       ))}
                     </select>
                   </div>
+                ) : (
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                        Amount Paid / Received (Rs.)
+                      </label>
+                      <div className="space-x-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaidAmount(grandTotal);
+                            setIsPaidTouched(true);
+                          }}
+                          className="px-1.5 py-0.5 text-[10px] bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded font-bold"
+                        >
+                          Full
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaidAmount(0);
+                            setIsPaidTouched(true);
+                          }}
+                          className="px-1.5 py-0.5 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-bold"
+                        >
+                          Zero
+                        </button>
+                      </div>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={isPaidTouched ? (paidAmount === 0 ? '' : paidAmount) : (paymentType === 'Credit' || paymentType === 'Advance' ? 0 : grandTotal)}
+                      onChange={e => {
+                        setPaidAmount(e.target.value === '' ? 0 : Number(e.target.value));
+                        setIsPaidTouched(true);
+                      }}
+                      placeholder={String(grandTotal)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
                 )}
               </div>
+
+              {paymentType === 'Bank' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                        Bank Amount Received (Rs.)
+                      </label>
+                      <div className="space-x-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaidAmount(grandTotal);
+                            setIsPaidTouched(true);
+                          }}
+                          className="px-1.5 py-0.5 text-[10px] bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded font-bold"
+                        >
+                          Full
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaidAmount(0);
+                            setIsPaidTouched(true);
+                          }}
+                          className="px-1.5 py-0.5 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-bold"
+                        >
+                          Zero
+                        </button>
+                      </div>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      value={isPaidTouched ? (paidAmount === 0 ? '' : paidAmount) : grandTotal}
+                      onChange={e => {
+                        setPaidAmount(e.target.value === '' ? 0 : Number(e.target.value));
+                        setIsPaidTouched(true);
+                      }}
+                      placeholder={String(grandTotal)}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold text-slate-800 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="pt-4 border-t border-slate-100 flex justify-end">
                 <button
@@ -662,7 +828,14 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
 
         <div className="print-a4 print-container space-y-4">
           <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
+            <div className="flex items-center justify-center space-x-3 mb-2">
+              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+              <div>
+                <h1 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h1>
+                <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul & Son's (03458829298)</p>
+                <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+              </div>
+            </div>
             <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
               POS SALES INVOICES & REGISTER
             </p>
@@ -690,7 +863,7 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredSales.map(sale => {
+                {paginatedSales.map(sale => {
                   const custName = customers.find(c => c.id === sale.customerId)?.name || (sale.customerId === 'walk-in' ? 'Walk-in Customer' : sale.customerId);
                   const itemName = items.find(i => i.id === sale.itemId)?.name || sale.itemId;
                   const itemUnit = items.find(i => i.id === sale.itemId)?.unit || '';
@@ -765,10 +938,18 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
                 </tfoot>
               )}
             </table>
+
+            <Pagination
+              currentPage={currentPage}
+              totalItems={filteredSales.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setPageSize}
+            />
           </div>
 
           <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-            Software by Roonjha Developer - 03152914836
+            Software by Roonjha Developers - 03152914836
           </div>
         </div>
       </div>

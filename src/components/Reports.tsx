@@ -38,59 +38,80 @@ export default function Reports() {
   const [otherIncomes, setOtherIncomes] = useState<DBOtherIncome[]>([]);
   const [banks, setBanks] = useState<DBBank[]>([]);
   const [vouchers, setVouchers] = useState<DBVoucher[]>([]);
-  const [balances, setBalances] = useState<LiveBalances | null>(null);
+  const [balances, setBalances] = useState<LiveBalances>({
+    cashBalance: 0,
+    bankBalances: {},
+    totalBankBalance: 0,
+    customerBalances: {},
+    vendorBalances: {},
+    itemStocks: {},
+    staffBalances: {},
+  });
   const [loading, setLoading] = useState(true);
 
   const loadData = async () => {
     try {
-      const allLedgers = await getAllRecords<DBLedgerEntry>('ledgers');
+      const [
+        allLedgers,
+        allInv,
+        allItems,
+        allCust,
+        allVend,
+        allVeh,
+        allStaff,
+        allTrips,
+        allPurchases,
+        allSales,
+        allExp,
+        allInc,
+        allBanks,
+        allVouchers
+      ] = await Promise.all([
+        getAllRecords<DBLedgerEntry>('ledgers'),
+        getAllRecords<DBInventoryLedgerEntry>('inventory_ledger'),
+        getAllRecords<DBItem>('items'),
+        getAllRecords<DBCustomer>('customers'),
+        getAllRecords<DBVendor>('vendors'),
+        getAllRecords<DBVehicle>('vehicles'),
+        getAllRecords<DBStaff>('staff'),
+        getAllRecords<DBTrip>('trips'),
+        getAllRecords<DBPurchase>('purchases'),
+        getAllRecords<DBSale>('sales'),
+        getAllRecords<DBGeneralExpense>('general_expenses'),
+        getAllRecords<DBOtherIncome>('other_incomes'),
+        getAllRecords<DBBank>('banks'),
+        getAllRecords<DBVoucher>('vouchers'),
+      ]);
+
       setLedgers(allLedgers);
-
-      const allInv = await getAllRecords<DBInventoryLedgerEntry>('inventory_ledger');
       setInventoryLedger(allInv);
-
-      const allItems = await getAllRecords<DBItem>('items');
       setItems(allItems);
-
-      const allCust = await getAllRecords<DBCustomer>('customers');
       setCustomers(allCust);
-
-      const allVend = await getAllRecords<DBVendor>('vendors');
       setVendors(allVend);
-
-      const allVeh = await getAllRecords<DBVehicle>('vehicles');
       setVehicles(allVeh);
-
-      const allStaff = await getAllRecords<DBStaff>('staff');
       setStaff(allStaff);
-
-      const allTrips = await getAllRecords<DBTrip>('trips');
       setTrips(allTrips);
-
-      const allPurchases = await getAllRecords<DBPurchase>('purchases');
       setPurchases(allPurchases);
-
-      const allSales = await getAllRecords<DBSale>('sales');
       setSales(allSales);
-
-      const allExp = await getAllRecords<DBGeneralExpense>('general_expenses');
       setGeneralExpenses(allExp);
-
-      const allInc = await getAllRecords<DBOtherIncome>('other_incomes');
       setOtherIncomes(allInc);
-
-      const allBanks = await getAllRecords<DBBank>('banks');
       setBanks(allBanks);
-
-      const allVouchers = await getAllRecords<DBVoucher>('vouchers');
       setVouchers(allVouchers);
 
-      const live = await calculateLiveBalances();
+      const live = await calculateLiveBalances({
+        ledgers: allLedgers,
+        inventoryEntries: allInv,
+        customers: allCust,
+        vendors: allVend,
+        banks: allBanks,
+        items: allItems,
+        staff: allStaff
+      });
       setBalances(live);
-
-      setLoading(false);
     } catch (err) {
-      console.error(err);
+      console.error('Error loading reports data:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -101,10 +122,6 @@ export default function Reports() {
   const handlePrintReport = () => {
     window.print();
   };
-
-  if (loading || !balances) {
-    return <div className="text-center py-6">Loading reports framework...</div>;
-  }
 
   // Common Date Filtering Helper
   const isWithinDateRange = (dateStr: string) => {
@@ -876,13 +893,28 @@ export default function Reports() {
         <div className="bg-white rounded-lg shadow-sm border border-slate-100 p-6 print-a4 print-container space-y-6">
           {/* Printable Document Header */}
           <div className="hidden print:block text-center border-b-2 border-slate-300 pb-4 mb-6">
-            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mt-1">
+            <div className="flex items-center justify-center space-x-3 mb-2">
+              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+              <div>
+                <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h2>
+                <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+                <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+              </div>
+            </div>
+            <h3 className="text-sm font-bold text-slate-600 uppercase tracking-wider mt-1">
               {activeReport.replace('-', ' ').toUpperCase()}
             </h3>
             <p className="text-xs font-mono font-bold text-slate-700 mt-2">Period: {startDate} to {endDate} | Printed: {new Date().toLocaleDateString('en-GB')}</p>
           </div>
 
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center no-print">
+              <div className="animate-spin rounded-full h-9 w-9 border-4 border-indigo-200 border-t-indigo-600 mb-3"></div>
+              <p className="text-slate-600 font-semibold text-sm">Aggregating report data...</p>
+              <p className="text-slate-400 text-xs mt-1">Computing ledger entries and statements</p>
+            </div>
+          ) : (
+            <>
           {/* ======================================================== */}
           {/* SALES REGISTER REPORT */}
           {/* ======================================================== */}
@@ -1798,10 +1830,12 @@ export default function Reports() {
               </div>
             </div>
           )}
+          </>
+          )}
           
           {/* Centered printing footer */}
-          <div className="print-footer text-center">
-            Software by Roonjha Developer - 03152914836
+          <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
+            Software by Roonjha Developers - 03152914836
           </div>
         </div>
       </div>

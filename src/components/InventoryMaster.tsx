@@ -2,12 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { getAllRecords, putRecord, deleteRecord, migrateItemIds, DBItem, DBInventoryLedgerEntry, DBTrip, DBPurchase, DBSale, DBCustomer, DBVendor } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances } from '../db/transactions';
 import { Edit, Trash, Plus, Package, Info, FileText, Printer, Search, X } from 'lucide-react';
+import Pagination from './Pagination';
 
 export default function InventoryMaster() {
   const [items, setItems] = useState<DBItem[]>([]);
   const [balances, setBalances] = useState<LiveBalances | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   // Sub-tabs navigation
   const [activeSubTab, setActiveSubTab] = useState<'directory' | 'ledger'>('directory');
@@ -43,14 +46,30 @@ export default function InventoryMaster() {
   const loadData = async () => {
     try {
       await migrateItemIds();
-      const allItems = await getAllRecords<DBItem>('items');
-      const liveBal = await calculateLiveBalances();
-      const allInvLedger = await getAllRecords<DBInventoryLedgerEntry>('inventory_ledger');
-      const allTrips = await getAllRecords<DBTrip>('trips');
-      const allPurchases = await getAllRecords<DBPurchase>('purchases');
-      const allSales = await getAllRecords<DBSale>('sales');
-      const allCustomers = await getAllRecords<DBCustomer>('customers');
-      const allVendors = await getAllRecords<DBVendor>('vendors');
+      const [
+        allItems,
+        allInvLedger,
+        allTrips,
+        allPurchases,
+        allSales,
+        allCustomers,
+        allVendors
+      ] = await Promise.all([
+        getAllRecords<DBItem>('items'),
+        getAllRecords<DBInventoryLedgerEntry>('inventory_ledger'),
+        getAllRecords<DBTrip>('trips'),
+        getAllRecords<DBPurchase>('purchases'),
+        getAllRecords<DBSale>('sales'),
+        getAllRecords<DBCustomer>('customers'),
+        getAllRecords<DBVendor>('vendors'),
+      ]);
+
+      const liveBal = await calculateLiveBalances({
+        items: allItems,
+        inventoryEntries: allInvLedger,
+        customers: allCustomers,
+        vendors: allVendors,
+      });
 
       setItems(allItems);
       setBalances(liveBal);
@@ -63,6 +82,7 @@ export default function InventoryMaster() {
       setLoading(false);
     } catch (err) {
       console.error(err);
+      setLoading(false);
     }
   };
 
@@ -391,6 +411,8 @@ export default function InventoryMaster() {
     );
   });
 
+  const paginatedItems = filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   return (
     <div className={`space-y-6 ${viewModalItem ? 'no-print' : ''}`}>
       {/* Navigation Sub-Tabs */}
@@ -473,9 +495,16 @@ export default function InventoryMaster() {
 
           <div className="print-a4 print-container space-y-4">
             <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-              <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
-                ITEMS & PRICING DIRECTORY
+              <div className="flex items-center justify-center space-x-3 mb-2">
+                <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+                <div>
+                  <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h2>
+                  <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+                  <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+                </div>
+              </div>
+              <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">
+                ITEMS &amp; PRICING DIRECTORY
               </p>
               <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
                 <div>Total Items: {items.length}</div>
@@ -499,7 +528,7 @@ export default function InventoryMaster() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {filteredItems.map(item => {
+                    {paginatedItems.map(item => {
                       const stock = balances?.itemStocks[item.id] !== undefined ? balances.itemStocks[item.id] : item.currentStock;
                       const isLow = stock <= item.minStock;
 
@@ -579,10 +608,18 @@ export default function InventoryMaster() {
                   )}
                 </table>
               </div>
+
+              <Pagination
+                currentPage={currentPage}
+                totalItems={filteredItems.length}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+              />
             </div>
 
             <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-              Software by Roonjha Developer - 03152914836
+              Software by Roonjha Developers - 03152914836
             </div>
           </div>
         </div>
@@ -629,8 +666,15 @@ export default function InventoryMaster() {
 
           <div className="print-a4 print-container space-y-4">
             <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-              <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
+              <div className="flex items-center justify-center space-x-3 mb-2">
+                <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+                <div>
+                  <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h2>
+                  <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+                  <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+                </div>
+              </div>
+              <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">
                 INVENTORY STOCK LEDGER SUMMARY
               </p>
               <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
@@ -718,7 +762,7 @@ export default function InventoryMaster() {
             </div>
 
             <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-              Software by Roonjha Developer - 03152914836
+              Software by Roonjha Developers - 03152914836
             </div>
           </div>
         </div>
@@ -804,8 +848,15 @@ export default function InventoryMaster() {
           <div className="print-a4 print-container space-y-6">
             {/* Print Header */}
             <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-              <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-              <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
+              <div className="flex items-center justify-center space-x-3 mb-2">
+                <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+                <div>
+                  <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h2>
+                  <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+                  <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+                </div>
+              </div>
+              <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">
                 ITEM INVENTORY STOCK LEDGER - {selectedItem.name}
               </p>
               <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-4 px-2">
@@ -910,7 +961,7 @@ export default function InventoryMaster() {
 
             {/* Print Footer */}
             <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-              Software by Roonjha Developer - 03152914836
+              Software by Roonjha Developers - 03152914836
             </div>
           </div>
         </div>
@@ -1198,14 +1249,19 @@ export default function InventoryMaster() {
 
             {/* Dedicated Print View (Print-Only) */}
             <div className="hidden print:block print-a4 print-container space-y-4">
-              <div className="bg-[#800000] p-4 text-white rounded-lg">
-                <h2 className="text-xl font-bold uppercase tracking-wide">
-                  Inventory Ledger — {viewModalItem.name.toUpperCase()}
-                </h2>
-                <p className="text-xs text-amber-300 font-medium mt-0.5">
-                  Code: {viewModalItem.id.toUpperCase()} | Detailed historical tracking of all stock movements
+              <div className="text-center pb-3 border-b-2 border-slate-300">
+                <div className="flex items-center justify-center space-x-3 mb-2">
+                  <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h2>
+                    <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+                    <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+                  </div>
+                </div>
+                <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">
+                  INVENTORY LEDGER — {viewModalItem.name.toUpperCase()} (CODE: {viewModalItem.id.toUpperCase()})
                 </p>
-                <div className="flex justify-between items-center text-[10px] text-slate-200 mt-2">
+                <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-2 px-2">
                   <span>Unit: {viewModalItem.unit} | Reorder Level: {viewModalItem.minStock} {viewModalItem.unit}</span>
                   <span>Generated: {new Date().toLocaleDateString('en-GB')} {new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
                 </div>
@@ -1273,7 +1329,7 @@ export default function InventoryMaster() {
               </table>
 
               <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-                Software by Roonjha Developer - 03152914836
+                Software by Roonjha Developers - 03152914836
               </div>
             </div>
           </>

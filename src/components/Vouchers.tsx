@@ -3,11 +3,14 @@ import { getAllRecords, putRecord, deleteRecord, DBGeneralExpense, DBOtherIncome
 import { calculateLiveBalances, LiveBalances, saveGeneralExpenseTransaction, deleteGeneralExpenseTransaction, saveOtherIncomeTransaction, deleteOtherIncomeTransaction, saveVoucherTransaction, deleteVoucherTransaction } from '../db/transactions';
 import { Plus, Trash, Edit, DollarSign, ArrowUpRight, ArrowDownRight, BookOpen, Printer, Search, X } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
+import Pagination from './Pagination';
 
 export default function Vouchers() {
   const [activeSubTab, setActiveSubTab] = useState<'expenses' | 'income' | 'vouchers'>('expenses');
   const [searchQuery, setSearchQuery] = useState('');
   const [voucherFilter, setVoucherFilter] = useState<'all' | 'cash_payment' | 'bank_payment' | 'cash_receipt' | 'bank_receipt'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   
   // Data States
   const [expenses, setExpenses] = useState<DBGeneralExpense[]>([]);
@@ -40,36 +43,50 @@ export default function Vouchers() {
 
   const loadData = async () => {
     try {
-      const allExpenses = await getAllRecords<DBGeneralExpense>('general_expenses');
+      const [
+        allExpenses,
+        allIncomes,
+        allVouchers,
+        allBanks,
+        allCustomers,
+        allVendors,
+      ] = await Promise.all([
+        getAllRecords<DBGeneralExpense>('general_expenses'),
+        getAllRecords<DBOtherIncome>('other_incomes'),
+        getAllRecords<DBVoucher>('vouchers'),
+        getAllRecords<DBBank>('banks'),
+        getAllRecords<DBCustomer>('customers'),
+        getAllRecords<DBVendor>('vendors'),
+      ]);
+
       allExpenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setExpenses(allExpenses);
 
-      const allIncomes = await getAllRecords<DBOtherIncome>('other_incomes');
       allIncomes.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setIncomes(allIncomes);
 
-      const allVouchers = await getAllRecords<DBVoucher>('vouchers');
       allVouchers.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setVouchers(allVouchers);
 
-      const allBanks = await getAllRecords<DBBank>('banks');
       setBanks(allBanks);
       if (allBanks.length > 0 && !bankId) {
         setBankId(allBanks[0].id);
       }
 
-      const allCustomers = await getAllRecords<DBCustomer>('customers');
       setCustomers(allCustomers);
-
-      const allVendors = await getAllRecords<DBVendor>('vendors');
       setVendors(allVendors);
 
-      const live = await calculateLiveBalances();
+      const live = await calculateLiveBalances({
+        customers: allCustomers,
+        vendors: allVendors,
+        banks: allBanks,
+      });
       setBalances(live);
 
       setLoading(false);
     } catch (err) {
       console.error(err);
+      setLoading(false);
     }
   };
 
@@ -258,6 +275,16 @@ export default function Vouchers() {
       v.paymentType.toLowerCase().includes(cleanSearch)
     );
   });
+
+  const paginatedExpenses = filteredExpenses.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const paginatedIncomes = filteredIncomes.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const paginatedVouchers = filteredVouchers.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const activeTotalCount = activeSubTab === 'expenses' 
+    ? filteredExpenses.length 
+    : activeSubTab === 'income' 
+    ? filteredIncomes.length 
+    : filteredVouchers.length;
 
   if (loading) {
     return <div className="text-center py-6">Loading vouchers database...</div>;
@@ -456,13 +483,20 @@ export default function Vouchers() {
       {/* Primary Tables */}
       <div className="print-a4 print-container space-y-4">
         <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-          <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-          <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
+          <div className="flex items-center justify-center space-x-3 mb-2">
+            <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+            <div>
+              <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h2>
+              <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+              <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+            </div>
+          </div>
+          <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">
             {activeSubTab === 'expenses' && 'GENERAL EXPENSES LOG REGISTER'}
             {activeSubTab === 'income' && 'OTHER BUSINESS INCOME REGISTER'}
             {activeSubTab === 'vouchers' && (
               <>
-                RECEIPTS & PAYMENTS VOUCHERS REGISTER
+                RECEIPTS &amp; PAYMENTS VOUCHERS REGISTER
                 {voucherFilter === 'cash_payment' && ' (CASH PAYMENTS ONLY)'}
                 {voucherFilter === 'bank_payment' && ' (BANK PAYMENTS ONLY)'}
                 {voucherFilter === 'cash_receipt' && ' (CASH RECEIPTS ONLY)'}
@@ -493,7 +527,7 @@ export default function Vouchers() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
-                  {filteredExpenses.map(exp => (
+                  {paginatedExpenses.map(exp => (
                     <tr key={exp.id} className="hover:bg-slate-50/50">
                       <td className="px-3 py-3 text-slate-500 whitespace-nowrap">{exp.date}</td>
                       <td className="px-3 py-3 font-semibold text-slate-700 whitespace-nowrap">{exp.category}</td>
@@ -541,7 +575,7 @@ export default function Vouchers() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
-                  {filteredIncomes.map(inc => (
+                  {paginatedIncomes.map(inc => (
                     <tr key={inc.id} className="hover:bg-slate-50/50">
                       <td className="px-3 py-3 text-slate-500 whitespace-nowrap">{inc.date}</td>
                       <td className="px-3 py-3 font-semibold text-slate-700 whitespace-nowrap">{inc.source}</td>
@@ -590,7 +624,7 @@ export default function Vouchers() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
-                  {filteredVouchers.map(vch => {
+                  {paginatedVouchers.map(vch => {
                     let partyName = vch.partyId;
                     if (vch.partyType === 'customer') {
                       partyName = customers.find(c => c.id === vch.partyId)?.name || vch.partyId;
@@ -678,10 +712,18 @@ export default function Vouchers() {
               </table>
             )}
           </div>
+
+          <Pagination
+            currentPage={currentPage}
+            totalItems={activeTotalCount}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+          />
         </div>
 
         <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-          Software by Roonjha Developer - 03152914836
+          Software by Roonjha Developers - 03152914836
         </div>
       </div>
 

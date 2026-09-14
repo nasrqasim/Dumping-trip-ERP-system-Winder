@@ -18,7 +18,14 @@ import {
   DBOtherIncome,
   DBStaffPayment,
   DBVoucher,
-  DBTripItem
+  DBTripItem,
+  DBDirectPurchase,
+  DBDieselTransaction,
+  DBDieselUsage,
+  DBVehicleMaintenance,
+  DBDriverAdvance,
+  DBDriverExpenseSubmission,
+  DBDriverAssignment
 } from './firestore';
 
 // ==========================================
@@ -255,17 +262,46 @@ export async function migrateLegacyStaffAndPayments(): Promise<void> {
   }
 }
 
-export async function calculateLiveBalances(): Promise<LiveBalances> {
+let hasRunLegacyMigrations = false;
+export async function runStartupMigrationsOnce(): Promise<void> {
+  if (hasRunLegacyMigrations) return;
+  hasRunLegacyMigrations = true;
   await migrateLegacyVouchers();
   await migrateLegacyStaffAndPayments();
-  const ledgers = await getAllRecords<DBLedgerEntry>('ledgers');
-  const inventoryEntries = await getAllRecords<DBInventoryLedgerEntry>('inventory_ledger');
-  
-  const customers = await getAllRecords<DBCustomer>('customers');
-  const vendors = await getAllRecords<DBVendor>('vendors');
-  const banks = await getAllRecords<DBBank>('banks');
-  const items = await getAllRecords<DBItem>('items');
-  const staff = await getAllRecords<DBStaff>('staff');
+}
+
+export interface PreloadedBalanceData {
+  ledgers?: DBLedgerEntry[];
+  inventoryEntries?: DBInventoryLedgerEntry[];
+  customers?: DBCustomer[];
+  vendors?: DBVendor[];
+  banks?: DBBank[];
+  items?: DBItem[];
+  staff?: DBStaff[];
+}
+
+export async function calculateLiveBalances(preloadedData?: PreloadedBalanceData): Promise<LiveBalances> {
+  if (!hasRunLegacyMigrations) {
+    await runStartupMigrationsOnce();
+  }
+
+  const [
+    ledgers,
+    inventoryEntries,
+    customers,
+    vendors,
+    banks,
+    items,
+    staff
+  ] = await Promise.all([
+    preloadedData?.ledgers ?? getAllRecords<DBLedgerEntry>('ledgers'),
+    preloadedData?.inventoryEntries ?? getAllRecords<DBInventoryLedgerEntry>('inventory_ledger'),
+    preloadedData?.customers ?? getAllRecords<DBCustomer>('customers'),
+    preloadedData?.vendors ?? getAllRecords<DBVendor>('vendors'),
+    preloadedData?.banks ?? getAllRecords<DBBank>('banks'),
+    preloadedData?.items ?? getAllRecords<DBItem>('items'),
+    preloadedData?.staff ?? getAllRecords<DBStaff>('staff'),
+  ]);
 
   // Initialize stocks
   const itemStocks: { [itemId: string]: number } = {};
@@ -453,14 +489,25 @@ export async function saveTripTransaction(trip: DBTrip): Promise<void> {
   // 2. Clear old ledger and inventory effects
   await clearLedgersForTransaction(trip.id);
 
-  // 3. Write Customer & Revenue Ledger entries
-  // Debit: Customer Account (receivable) or Cash/Bank
-  // Credit: Material Sales Revenue & Trip Transportation Revenue
+  const effectiveCustomerId = trip.customerId || 'walk-in';
   const descStr = trip.items && trip.items.length > 0
     ? `Trip dispatch (${trip.items.length} materials): ${trip.items.map(i => `${i.quantity} ${i.unit} ${i.itemName || i.itemId}`).join(', ')} via vehicle ${trip.vehicleId || 'Direct'}`
     : `Trip dispatch: ${trip.quantity} ${trip.unit} item ID ${trip.itemId} via vehicle ${trip.vehicleId || 'Direct'}`;
   
-  // Create Revenue Entries
+  // 3. True Double-Entry: Always Debit Customer Account with FULL Invoice Grand Total
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: trip.date,
+    type: 'trip',
+    referenceId: trip.id,
+    accountId: effectiveCustomerId,
+    accountType: 'customer',
+    debit: trip.grandTotal,
+    credit: 0,
+    description: `Trip ${trip.id} Invoice Total: Rs. ${trip.grandTotal.toLocaleString()} (Freight: Rs. ${trip.vehicleCharges.toLocaleString()}${trip.discount > 0 ? `, Discount: Rs. ${trip.discount.toLocaleString()}` : ''})`,
+  });
+
+  // 4. Create Revenue Entries
   if (trip.materialTotal > 0) {
     await putRecord<DBLedgerEntry>('ledgers', {
       id: generateUuid(),
@@ -485,7 +532,7 @@ export async function saveTripTransaction(trip: DBTrip): Promise<void> {
       accountType: 'revenue',
       debit: 0,
       credit: trip.vehicleCharges,
-      description: `Vehicle Freight Charges: ${trip.vehicleCharges} for Trip ${trip.id}`,
+      description: `Vehicle Freight Charges: Rs. ${trip.vehicleCharges.toLocaleString()} for Trip ${trip.id}`,
     });
   }
 
@@ -499,7 +546,7 @@ export async function saveTripTransaction(trip: DBTrip): Promise<void> {
       accountType: 'revenue',
       debit: 0,
       credit: trip.totalExpenses,
-      description: `Billed Trip Expenses: ${trip.totalExpenses} for Trip ${trip.id}`,
+      description: `Billed Trip Expenses: Rs. ${trip.totalExpenses.toLocaleString()} for Trip ${trip.id}`,
     });
   }
 
@@ -513,21 +560,21 @@ export async function saveTripTransaction(trip: DBTrip): Promise<void> {
       accountType: 'expense',
       debit: trip.discount,
       credit: 0,
-      description: `Trip Discount: ${trip.discount} for Trip ${trip.id}`,
+      description: `Trip Discount: Rs. ${trip.discount.toLocaleString()} for Trip ${trip.id}`,
     });
   }
 
-  // Create Debit / Payment Entries based on Payment Type and paidAmount
+  // 5. Record Payment Received on spot (Cash or Bank)
   const actualPaid = trip.paidAmount !== undefined
     ? Number(trip.paidAmount) || 0
     : (trip.paymentType === 'Cash' || trip.paymentType === 'Bank' ? trip.grandTotal : 0);
   
-  const isBank = trip.paymentType === 'Bank' && !!trip.bankId;
-  const cashOrBankAccountId = isBank ? trip.bankId! : 'cash';
-  const cashOrBankAccountType: 'cash' | 'bank' = isBank ? 'bank' : 'cash';
-
-  // 1) Record cash/bank received if any amount was paid on spot
   if (actualPaid > 0) {
+    const isBank = trip.paymentType === 'Bank' && !!trip.bankId;
+    const cashOrBankAccountId = isBank ? trip.bankId! : 'cash';
+    const cashOrBankAccountType: 'cash' | 'bank' = isBank ? 'bank' : 'cash';
+
+    // 5a. Debit Cash / Bank Account (Money Actually Received)
     await putRecord<DBLedgerEntry>('ledgers', {
       id: generateUuid(),
       date: trip.date,
@@ -537,61 +584,25 @@ export async function saveTripTransaction(trip: DBTrip): Promise<void> {
       accountType: cashOrBankAccountType,
       debit: actualPaid,
       credit: 0,
-      description: `Trip ${trip.id} Payment Received (${isBank ? 'Bank' : 'Cash'}) - Total Bill: Rs. ${trip.grandTotal.toLocaleString()}`,
+      description: `Trip ${trip.id} Payment Received (${isBank ? 'Bank' : 'Cash'}) from ${effectiveCustomerId}`,
+    });
+
+    // 5b. Credit Customer Account (Payment Credited against invoice / advance created)
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: trip.date,
+      type: 'trip',
+      referenceId: trip.id,
+      accountId: effectiveCustomerId,
+      accountType: 'customer',
+      debit: 0,
+      credit: actualPaid,
+      description: `Trip ${trip.id} Payment Received (${isBank ? 'Bank' : 'Cash'})`,
     });
   }
 
-  // 2) Check if there is an unpaid balance or an excess overpayment
-  const unpaid = trip.grandTotal - actualPaid;
-
-  if (unpaid > 0) {
-    // Customer owes remaining balance (on credit / using advance)
-    if (trip.customerId && trip.customerId !== 'walk-in') {
-      await putRecord<DBLedgerEntry>('ledgers', {
-        id: generateUuid(),
-        date: trip.date,
-        type: 'trip',
-        referenceId: trip.id,
-        accountId: trip.customerId,
-        accountType: 'customer',
-        debit: unpaid,
-        credit: 0,
-        description: `Trip ${trip.id} Credit / Unpaid Balance (Bill: Rs. ${trip.grandTotal.toLocaleString()}, Paid: Rs. ${actualPaid.toLocaleString()})`,
-      });
-    } else {
-      // Walk-in fallback
-      await putRecord<DBLedgerEntry>('ledgers', {
-        id: generateUuid(),
-        date: trip.date,
-        type: 'trip',
-        referenceId: trip.id,
-        accountId: 'cash',
-        accountType: 'cash',
-        debit: unpaid,
-        credit: 0,
-        description: `Trip ${trip.id} Walk-in Counter Sale (Net Bill: Rs. ${trip.grandTotal.toLocaleString()})`,
-      });
-    }
-  } else if (unpaid < 0) {
-    // Customer paid MORE than the bill amount (excess money goes to customer advance)
-    const excess = actualPaid - trip.grandTotal;
-    if (trip.customerId && trip.customerId !== 'walk-in') {
-      await putRecord<DBLedgerEntry>('ledgers', {
-        id: generateUuid(),
-        date: trip.date,
-        type: 'trip',
-        referenceId: trip.id,
-        accountId: trip.customerId,
-        accountType: 'customer',
-        debit: 0,
-        credit: excess,
-        description: `Trip ${trip.id} Overpayment (Rs. ${excess.toLocaleString()}) Credited to Customer Advance`,
-      });
-    }
-  }
-
-  // 4. Record Trip Expenses in Ledger
-  // Each expense decreases cash (default) or bank and increases trip expense
+  // 6. Record Trip Expenses in Ledger
+  // Each internal expense decreases cash (default) or bank and increases trip expense
   for (const exp of trip.expenses) {
     if (exp.amount <= 0) continue;
     
@@ -608,7 +619,7 @@ export async function saveTripTransaction(trip: DBTrip): Promise<void> {
       description: `Trip Expense: ${exp.category} (${exp.description || ''}) - Veh: ${trip.vehicleId}`,
     });
 
-    // Credit: Cash (Default) or Bank (if Trip Payment Type was Bank, reduce bank; otherwise cash)
+    // Credit: Cash (Default) or Bank
     let expenseCreditAccountId = 'cash';
     let expenseCreditAccountType: 'cash' | 'bank' = 'cash';
 
@@ -630,7 +641,7 @@ export async function saveTripTransaction(trip: DBTrip): Promise<void> {
     });
   }
 
-  // 5. Update Inventory Ledger
+  // 7. Update Inventory Ledger
   // Outflow of stock for all dispatched materials
   if (trip.items && trip.items.length > 0) {
     for (const itm of trip.items) {
@@ -660,9 +671,39 @@ export async function saveTripTransaction(trip: DBTrip): Promise<void> {
       value: trip.materialTotal,
     });
   }
+
+  // 8. Auto-update vehicle status and location
+  if (trip.vehicleId) {
+    const allVeh = await getAllRecords<DBVehicle>('vehicles');
+    const veh = allVeh.find(v => v.id === trip.vehicleId);
+    if (veh) {
+      if (trip.tripStatus === 'active') {
+        veh.status = 'on_trip';
+        veh.currentLocation = trip.to || trip.from || 'En route';
+        veh.currentTripId = trip.id;
+      } else if (trip.tripStatus === 'completed' || !trip.tripStatus) {
+        veh.status = 'available';
+        veh.currentLocation = trip.to || 'Base / Yard';
+        veh.currentTripId = undefined;
+      }
+      await putRecord<DBVehicle>('vehicles', veh);
+    }
+  }
 }
 
 export async function deleteTripTransaction(tripId: string): Promise<void> {
+  const allTrips = await getAllRecords<DBTrip>('trips');
+  const targetTrip = allTrips.find(t => t.id === tripId);
+  if (targetTrip && targetTrip.vehicleId) {
+    const allVeh = await getAllRecords<DBVehicle>('vehicles');
+    const veh = allVeh.find(v => v.id === targetTrip.vehicleId);
+    if (veh && veh.currentTripId === tripId) {
+      veh.status = 'available';
+      veh.currentTripId = undefined;
+      await putRecord<DBVehicle>('vehicles', veh);
+    }
+  }
+
   await deleteRecord('trips', tripId);
   await clearLedgersForTransaction(tripId);
 }
@@ -671,11 +712,25 @@ export async function savePurchaseTransaction(purchase: DBPurchase): Promise<voi
   await putRecord<DBPurchase>('purchases', purchase);
   await clearLedgersForTransaction(purchase.id);
 
+  const effectiveVendorId = purchase.vendorId || 'walk-in-vendor';
   const descStr = purchase.items && purchase.items.length > 0
-    ? `Purchase Bill ${purchase.id} from ${purchase.vendorId} - ${purchase.items.length} items (Total: Rs. ${purchase.total.toLocaleString()})`
-    : `Purchase Bill ${purchase.id} from ${purchase.vendorId} - Item: ${purchase.itemId}, Qty: ${purchase.quantity}`;
+    ? `Purchase Bill ${purchase.id} from ${effectiveVendorId} - ${purchase.items.length} items (Total: Rs. ${purchase.total.toLocaleString()})`
+    : `Purchase Bill ${purchase.id} from ${effectiveVendorId} - Item: ${purchase.itemId}, Qty: ${purchase.quantity}`;
 
-  // 1. Debit Purchase Cost
+  // 1. True Double-Entry: Always Credit Vendor Account with FULL Purchase Total
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: purchase.date,
+    type: 'purchase',
+    referenceId: purchase.id,
+    accountId: effectiveVendorId,
+    accountType: 'vendor',
+    debit: 0,
+    credit: purchase.total,
+    description: `Purchase Bill ${purchase.id} Total: Rs. ${purchase.total.toLocaleString()}`,
+  });
+
+  // 2. Debit Purchase Cost
   await putRecord<DBLedgerEntry>('ledgers', {
     id: generateUuid(),
     date: purchase.date,
@@ -688,23 +743,30 @@ export async function savePurchaseTransaction(purchase: DBPurchase): Promise<voi
     description: descStr,
   });
 
-  // 2. Settlement & Split Payment Accounting
+  // 3. Record Cash or Bank Paid Out to Vendor on spot
   const actualPaid = purchase.paidAmount !== undefined
-    ? purchase.paidAmount
+    ? Number(purchase.paidAmount) || 0
     : (purchase.paymentType === 'Credit' ? 0 : purchase.total);
 
-  const unpaid = purchase.total - actualPaid;
-
-  // 2a. Record Cash or Bank Paid Out
   if (actualPaid > 0) {
-    let paymentAccountId = 'cash';
-    let paymentAccountType: 'cash' | 'bank' = 'cash';
+    const isBank = purchase.paymentType === 'Bank' && !!purchase.bankId;
+    const paymentAccountId = isBank ? purchase.bankId! : 'cash';
+    const paymentAccountType: 'cash' | 'bank' = isBank ? 'bank' : 'cash';
 
-    if (purchase.paymentType === 'Bank' && purchase.bankId) {
-      paymentAccountId = purchase.bankId;
-      paymentAccountType = 'bank';
-    }
+    // 3a. Debit Vendor Account (Reducing payable / increasing advance)
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: purchase.date,
+      type: 'purchase',
+      referenceId: purchase.id,
+      accountId: effectiveVendorId,
+      accountType: 'vendor',
+      debit: actualPaid,
+      credit: 0,
+      description: `Purchase Bill ${purchase.id} Paid Out (${isBank ? 'Bank' : 'Cash'})`,
+    });
 
+    // 3b. Credit Cash / Bank Account (Money Paid Out)
     await putRecord<DBLedgerEntry>('ledgers', {
       id: generateUuid(),
       date: purchase.date,
@@ -714,45 +776,11 @@ export async function savePurchaseTransaction(purchase: DBPurchase): Promise<voi
       accountType: paymentAccountType,
       debit: 0,
       credit: actualPaid,
-      description: `Purchase Bill ${purchase.id} Paid Out on Spot via ${purchase.paymentType}`,
+      description: `Purchase Bill ${purchase.id} Paid Out (${isBank ? 'Bank' : 'Cash'}) to ${effectiveVendorId}`,
     });
   }
 
-  // 2b. Record Vendor Credit (Unpaid Balance) or Advance (Overpayment)
-  if (unpaid > 0) {
-    if (purchase.vendorId && purchase.vendorId !== 'walk-in-vendor') {
-      // Crediting vendor account increases payable or consumes vendor advance
-      await putRecord<DBLedgerEntry>('ledgers', {
-        id: generateUuid(),
-        date: purchase.date,
-        type: 'purchase',
-        referenceId: purchase.id,
-        accountId: purchase.vendorId,
-        accountType: 'vendor',
-        debit: 0,
-        credit: unpaid,
-        description: `Purchase Bill ${purchase.id} Remaining Unpaid (Payable: Rs. ${unpaid.toLocaleString()})`,
-      });
-    }
-  } else if (unpaid < 0) {
-    // Paid MORE than the bill (excess paid creates or increases vendor advance)
-    const excess = actualPaid - purchase.total;
-    if (purchase.vendorId && purchase.vendorId !== 'walk-in-vendor') {
-      await putRecord<DBLedgerEntry>('ledgers', {
-        id: generateUuid(),
-        date: purchase.date,
-        type: 'purchase',
-        referenceId: purchase.id,
-        accountId: purchase.vendorId,
-        accountType: 'vendor',
-        debit: excess,
-        credit: 0,
-        description: `Purchase Bill ${purchase.id} Overpayment (Rs. ${excess.toLocaleString()}) Credited to Vendor Advance`,
-      });
-    }
-  }
-
-  // 3. Update Inventory Ledger
+  // 4. Update Inventory Ledger
   if (purchase.items && purchase.items.length > 0) {
     for (const itm of purchase.items) {
       if (itm.quantity <= 0 || !itm.itemId) continue;
@@ -792,9 +820,23 @@ export async function saveSaleTransaction(sale: DBSale): Promise<void> {
   await putRecord<DBSale>('sales', sale);
   await clearLedgersForTransaction(sale.id);
 
-  const descStr = `POS Sale to customer ID ${sale.customerId} - Qty: ${sale.quantity}`;
+  const effectiveCustomerId = sale.customerId || 'walk-in';
+  const descStr = `POS Sale ${sale.id} to ${effectiveCustomerId} - Qty: ${sale.quantity} @ Rs. ${sale.rate.toLocaleString()}${sale.discount > 0 ? `, Discount: Rs. ${sale.discount.toLocaleString()}` : ''}`;
 
-  // 1. Credit Sales Revenue
+  // 1. True Double-Entry: Always Debit Customer Account with FULL Sale Total
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: sale.date,
+    type: 'sale',
+    referenceId: sale.id,
+    accountId: effectiveCustomerId,
+    accountType: 'customer',
+    debit: sale.total,
+    credit: 0,
+    description: `POS Counter Sale ${sale.id} Total: Rs. ${sale.total.toLocaleString()}`,
+  });
+
+  // 2. Credit Sales Revenue
   await putRecord<DBLedgerEntry>('ledgers', {
     id: generateUuid(),
     date: sale.date,
@@ -807,31 +849,44 @@ export async function saveSaleTransaction(sale: DBSale): Promise<void> {
     description: descStr,
   });
 
-  // 2. Debit Customer or Cash/Bank
-  let debitAccountId = 'cash';
-  let debitAccountType: 'cash' | 'bank' | 'customer' = 'cash';
+  // 3. Record Spot Payment if received
+  const actualPaid = sale.paidAmount !== undefined
+    ? Number(sale.paidAmount) || 0
+    : (sale.paymentType === 'Cash' || sale.paymentType === 'Bank' ? sale.total : 0);
 
-  if ((sale.paymentType === 'Credit' || sale.paymentType === 'Advance') && sale.customerId && sale.customerId !== 'walk-in') {
-    debitAccountId = sale.customerId;
-    debitAccountType = 'customer';
-  } else if (sale.paymentType === 'Bank' && sale.bankId) {
-    debitAccountId = sale.bankId;
-    debitAccountType = 'bank';
+  if (actualPaid > 0) {
+    const isBank = sale.paymentType === 'Bank' && !!sale.bankId;
+    const paymentAccountId = isBank ? sale.bankId! : 'cash';
+    const paymentAccountType: 'cash' | 'bank' = isBank ? 'bank' : 'cash';
+
+    // 3a. Debit Cash / Bank (Money Actually Received)
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: sale.date,
+      type: 'sale',
+      referenceId: sale.id,
+      accountId: paymentAccountId,
+      accountType: paymentAccountType,
+      debit: actualPaid,
+      credit: 0,
+      description: `POS Sale ${sale.id} Payment Received (${isBank ? 'Bank' : 'Cash'}) from ${effectiveCustomerId}`,
+    });
+
+    // 3b. Credit Customer Account (Payment logged against sale)
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: sale.date,
+      type: 'sale',
+      referenceId: sale.id,
+      accountId: effectiveCustomerId,
+      accountType: 'customer',
+      debit: 0,
+      credit: actualPaid,
+      description: `POS Sale ${sale.id} Payment Received (${isBank ? 'Bank' : 'Cash'})`,
+    });
   }
 
-  await putRecord<DBLedgerEntry>('ledgers', {
-    id: generateUuid(),
-    date: sale.date,
-    type: 'sale',
-    referenceId: sale.id,
-    accountId: debitAccountId,
-    accountType: debitAccountType,
-    debit: sale.total,
-    credit: 0,
-    description: `POS Sale Payment: ${sale.paymentType}`,
-  });
-
-  // 3. Update Inventory Ledger
+  // 4. Update Inventory Ledger
   await putRecord<DBInventoryLedgerEntry>('inventory_ledger', {
     id: generateUuid(),
     date: sale.date,
@@ -1146,5 +1201,364 @@ export async function deleteStaffPaymentTransaction(payId: string): Promise<void
     if (entry.referenceId === payId && (entry.type === 'salary_payment' || entry.type === 'staff_advance' || entry.type === 'staff_loan')) {
       await deleteRecord('ledgers', entry.id);
     }
+  }
+}
+
+// ==========================================
+// DIRECT VENDOR PURCHASES (NON-STOCK)
+// ==========================================
+
+export async function saveDirectPurchaseTransaction(purchase: DBDirectPurchase): Promise<void> {
+  await putRecord<DBDirectPurchase>('direct_purchases', purchase);
+  await clearLedgersForTransaction(purchase.id);
+
+  const effectiveVendorId = purchase.vendorId || 'walk-in-vendor';
+  let expenseAccount = 'expenses_direct_purchase';
+  if (purchase.category.toLowerCase().includes('diesel') || purchase.category.toLowerCase().includes('fuel')) {
+    expenseAccount = 'expenses_diesel';
+  } else if (purchase.category.toLowerCase().includes('maintenance') || purchase.category.toLowerCase().includes('repair') || purchase.category.toLowerCase().includes('mistri')) {
+    expenseAccount = 'expenses_maintenance';
+  }
+
+  // 1. Debit: Relevant Expense Account
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: purchase.date,
+    type: 'direct_purchase',
+    referenceId: purchase.id,
+    accountId: expenseAccount,
+    accountType: 'expense',
+    debit: purchase.total,
+    credit: 0,
+    description: `Direct Purchase: ${purchase.category} - ${purchase.description} (${effectiveVendorId})`,
+  });
+
+  // 2. Credit: Vendor Account (Full Invoice Amount)
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: purchase.date,
+    type: 'direct_purchase',
+    referenceId: purchase.id,
+    accountId: effectiveVendorId,
+    accountType: 'vendor',
+    debit: 0,
+    credit: purchase.total,
+    description: `Direct Purchase Invoice: ${purchase.category} - ${purchase.description}`,
+  });
+
+  // 3. Payment Paid on Spot (Cash or Bank)
+  const actualPaid = purchase.paidAmount !== undefined
+    ? Number(purchase.paidAmount) || 0
+    : (purchase.paymentType === 'Cash' || purchase.paymentType === 'Bank' ? purchase.total : 0);
+
+  if (actualPaid > 0) {
+    const isBank = purchase.paymentType === 'Bank' && !!purchase.bankId;
+    const cashOrBankAccountId = isBank ? purchase.bankId! : 'cash';
+    const cashOrBankAccountType: 'cash' | 'bank' = isBank ? 'bank' : 'cash';
+
+    // 3a. Debit: Vendor Account (Paid to Vendor)
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: purchase.date,
+      type: 'direct_purchase',
+      referenceId: purchase.id,
+      accountId: effectiveVendorId,
+      accountType: 'vendor',
+      debit: actualPaid,
+      credit: 0,
+      description: `Payment for Direct Purchase ${purchase.id} (${isBank ? 'Bank' : 'Cash'})`,
+    });
+
+    // 3b. Credit: Cash / Bank Account (Money Outflow)
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: purchase.date,
+      type: 'direct_purchase',
+      referenceId: purchase.id,
+      accountId: cashOrBankAccountId,
+      accountType: cashOrBankAccountType,
+      debit: 0,
+      credit: actualPaid,
+      description: `Direct Purchase Payment to ${effectiveVendorId} (${purchase.category})`,
+    });
+  }
+}
+
+export async function deleteDirectPurchaseTransaction(purchaseId: string): Promise<void> {
+  await deleteRecord('direct_purchases', purchaseId);
+  await clearLedgersForTransaction(purchaseId);
+}
+
+// ==========================================
+// DIESEL MANAGEMENT & ACCOUNTING
+// ==========================================
+
+export async function saveDieselTransaction(tx: DBDieselTransaction): Promise<void> {
+  await putRecord<DBDieselTransaction>('diesel_transactions', tx);
+  await clearLedgersForTransaction(tx.id);
+
+  const effectiveVendorId = tx.vendorId || 'walk-in-pump';
+
+  // 1. Debit: Diesel Expense Account
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: tx.date,
+    type: 'diesel',
+    referenceId: tx.id,
+    accountId: 'expenses_diesel',
+    accountType: 'expense',
+    debit: tx.totalAmount,
+    credit: 0,
+    description: `Diesel Purchase: ${tx.litres}L @ Rs. ${tx.ratePerLitre}/L for Veh ${tx.vehicleNumber || tx.vehicleId || 'Bulk'}`,
+  });
+
+  // 2. Credit: Vendor Account
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: tx.date,
+    type: 'diesel',
+    referenceId: tx.id,
+    accountId: effectiveVendorId,
+    accountType: 'vendor',
+    debit: 0,
+    credit: tx.totalAmount,
+    description: `Diesel Bill: ${tx.litres}L @ Rs. ${tx.ratePerLitre}/L for Veh ${tx.vehicleNumber || tx.vehicleId || 'Bulk'}`,
+  });
+
+  // 3. Paid on spot
+  const actualPaid = tx.paidAmount !== undefined ? Number(tx.paidAmount) || 0 : (tx.paymentType === 'Cash' || tx.paymentType === 'Bank' ? tx.totalAmount : 0);
+  if (actualPaid > 0) {
+    const isBank = tx.paymentType === 'Bank' && !!tx.bankId;
+    const cashOrBankAccountId = isBank ? tx.bankId! : 'cash';
+    const cashOrBankAccountType: 'cash' | 'bank' = isBank ? 'bank' : 'cash';
+
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: tx.date,
+      type: 'diesel',
+      referenceId: tx.id,
+      accountId: effectiveVendorId,
+      accountType: 'vendor',
+      debit: actualPaid,
+      credit: 0,
+      description: `Diesel Payment Paid (${isBank ? 'Bank' : 'Cash'}) to ${effectiveVendorId}`,
+    });
+
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: tx.date,
+      type: 'diesel',
+      referenceId: tx.id,
+      accountId: cashOrBankAccountId,
+      accountType: cashOrBankAccountType,
+      debit: 0,
+      credit: actualPaid,
+      description: `Diesel Purchase Outflow for Veh ${tx.vehicleNumber || tx.vehicleId || 'Bulk'}`,
+    });
+  }
+}
+
+export async function deleteDieselTransaction(txId: string): Promise<void> {
+  await deleteRecord('diesel_transactions', txId);
+  await clearLedgersForTransaction(txId);
+}
+
+export async function saveDieselUsage(usage: DBDieselUsage): Promise<void> {
+  await putRecord<DBDieselUsage>('diesel_usage', usage);
+}
+
+export async function deleteDieselUsage(usageId: string): Promise<void> {
+  await deleteRecord('diesel_usage', usageId);
+}
+
+// ==========================================
+// VEHICLE MAINTENANCE & WORKSHOP
+// ==========================================
+
+export async function saveVehicleMaintenanceTransaction(maint: DBVehicleMaintenance): Promise<void> {
+  await putRecord<DBVehicleMaintenance>('vehicle_maintenance', maint);
+  await clearLedgersForTransaction(maint.id);
+
+  const effectiveVendorId = maint.vendorId || maint.workshopVendor || 'workshop-vendor';
+
+  // 1. Debit: Maintenance Expense Account
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: maint.date,
+    type: 'maintenance',
+    referenceId: maint.id,
+    accountId: 'expenses_maintenance',
+    accountType: 'expense',
+    debit: maint.totalCost,
+    credit: 0,
+    description: `Vehicle Maintenance: ${maint.category} for Veh ${maint.vehicleNumber || maint.vehicleId} (${maint.description})`,
+  });
+
+  // 2. Credit: Workshop / Vendor Account
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: maint.date,
+    type: 'maintenance',
+    referenceId: maint.id,
+    accountId: effectiveVendorId,
+    accountType: 'vendor',
+    debit: 0,
+    credit: maint.totalCost,
+    description: `Maintenance Bill: ${maint.category} for Veh ${maint.vehicleNumber || maint.vehicleId}`,
+  });
+
+  // 3. Paid on spot
+  const actualPaid = maint.paidAmount !== undefined ? Number(maint.paidAmount) || 0 : (maint.paymentType === 'Cash' || maint.paymentType === 'Bank' ? maint.totalCost : 0);
+  if (actualPaid > 0) {
+    const isBank = maint.paymentType === 'Bank' && !!maint.bankId;
+    const cashOrBankAccountId = isBank ? maint.bankId! : 'cash';
+    const cashOrBankAccountType: 'cash' | 'bank' = isBank ? 'bank' : 'cash';
+
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: maint.date,
+      type: 'maintenance',
+      referenceId: maint.id,
+      accountId: effectiveVendorId,
+      accountType: 'vendor',
+      debit: actualPaid,
+      credit: 0,
+      description: `Maintenance Payment Paid (${isBank ? 'Bank' : 'Cash'}) to ${effectiveVendorId}`,
+    });
+
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: maint.date,
+      type: 'maintenance',
+      referenceId: maint.id,
+      accountId: cashOrBankAccountId,
+      accountType: cashOrBankAccountType,
+      debit: 0,
+      credit: actualPaid,
+      description: `Maintenance Outflow for Veh ${maint.vehicleNumber || maint.vehicleId}`,
+    });
+  }
+}
+
+export async function deleteVehicleMaintenanceTransaction(maintId: string): Promise<void> {
+  await deleteRecord('vehicle_maintenance', maintId);
+  await clearLedgersForTransaction(maintId);
+}
+
+// ==========================================
+// DRIVER ADVANCES & EXPENSE SETTLEMENTS
+// ==========================================
+
+export async function saveDriverAdvanceTransaction(adv: DBDriverAdvance): Promise<void> {
+  await putRecord<DBDriverAdvance>('driver_advances', adv);
+  await clearLedgersForTransaction(adv.id);
+
+  const isBank = adv.paymentType === 'Bank' && !!adv.bankId;
+  const cashOrBankAccountId = isBank ? adv.bankId! : 'cash';
+  const cashOrBankAccountType: 'cash' | 'bank' = isBank ? 'bank' : 'cash';
+
+  // 1. Debit: Staff / Driver Account (Receivable Advance)
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: adv.date,
+    type: 'driver_advance',
+    referenceId: adv.id,
+    accountId: adv.driverId,
+    accountType: 'staff',
+    debit: adv.amount,
+    credit: 0,
+    description: `Driver Trip Advance Issued: ${adv.purpose} (Veh: ${adv.vehicleId || 'N/A'})`,
+  });
+
+  // 2. Credit: Cash / Bank Account (Money Outflow)
+  await putRecord<DBLedgerEntry>('ledgers', {
+    id: generateUuid(),
+    date: adv.date,
+    type: 'driver_advance',
+    referenceId: adv.id,
+    accountId: cashOrBankAccountId,
+    accountType: cashOrBankAccountType,
+    debit: 0,
+    credit: adv.amount,
+    description: `Driver Advance Payout to ID ${adv.driverId} (${adv.purpose})`,
+  });
+}
+
+export async function deleteDriverAdvanceTransaction(advId: string): Promise<void> {
+  await deleteRecord('driver_advances', advId);
+  await clearLedgersForTransaction(advId);
+}
+
+export async function saveDriverExpenseSettlementTransaction(expense: DBDriverExpenseSubmission, returnCashAmount?: number): Promise<void> {
+  await putRecord<DBDriverExpenseSubmission>('driver_expenses', expense);
+  await clearLedgersForTransaction(expense.id);
+
+  if (expense.amountApproved > 0) {
+    // Debit: Trip Expenses
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: expense.date,
+      type: 'driver_expense',
+      referenceId: expense.id,
+      accountId: 'expenses_trip',
+      accountType: 'expense',
+      debit: expense.amountApproved,
+      credit: 0,
+      description: `Approved Driver Trip Expense: ${expense.category} (${expense.description}) - Veh: ${expense.vehicleId || 'N/A'}`,
+    });
+
+    // Credit: Driver Account (Decreases Driver's Advance Debt)
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: expense.date,
+      type: 'driver_expense',
+      referenceId: expense.id,
+      accountId: expense.driverId,
+      accountType: 'staff',
+      debit: 0,
+      credit: expense.amountApproved,
+      description: `Driver Expense Approved: ${expense.category} adjusted against advance`,
+    });
+  }
+
+  if (returnCashAmount && returnCashAmount > 0) {
+    // Debit: Cash (Cash returned by driver back to company cashbox)
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: expense.date,
+      type: 'driver_expense',
+      referenceId: expense.id,
+      accountId: 'cash',
+      accountType: 'cash',
+      debit: returnCashAmount,
+      credit: 0,
+      description: `Unused advance cash returned by driver ID ${expense.driverId}`,
+    });
+
+    // Credit: Driver Account (Further Decreases Driver's Advance Debt)
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: expense.date,
+      type: 'driver_expense',
+      referenceId: expense.id,
+      accountId: expense.driverId,
+      accountType: 'staff',
+      debit: 0,
+      credit: returnCashAmount,
+      description: `Driver cash return credited against advance debt`,
+    });
+  }
+}
+
+export async function saveDriverAssignment(assignment: DBDriverAssignment): Promise<void> {
+  await putRecord<DBDriverAssignment>('driver_assignments', assignment);
+  
+  // Also update vehicle's assigned driver and status
+  const allVehicles = await getAllRecords<DBVehicle>('vehicles');
+  const targetVeh = allVehicles.find(v => v.id === assignment.vehicleId);
+  if (targetVeh) {
+    targetVeh.driver = assignment.driverName;
+    targetVeh.driverId = assignment.driverId;
+    await putRecord<DBVehicle>('vehicles', targetVeh);
   }
 }

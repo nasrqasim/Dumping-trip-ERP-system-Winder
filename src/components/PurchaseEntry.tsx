@@ -3,6 +3,7 @@ import { getAllRecords, putRecord, deleteRecord, DBPurchase, DBVendor, DBItem, D
 import { calculateLiveBalances, LiveBalances, savePurchaseTransaction, deletePurchaseTransaction } from '../db/transactions';
 import { Plus, Trash, Edit, Truck, Calendar, ShoppingBag, Printer, Search, X, UserCheck, AlertTriangle, ShieldAlert, Wallet, FileText, Download, Check } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
+import Pagination from './Pagination';
 
 interface PurchaseEntryProps {
   preselectedVendorId?: string;
@@ -28,6 +29,8 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
   const [balances, setBalances] = useState<LiveBalances | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   // Modals & Print Job
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -457,6 +460,8 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
     );
   });
 
+  const paginatedPurchases = filteredPurchases.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   if (loading) {
     return <div className="text-center py-6">Loading purchases ledger...</div>;
   }
@@ -465,98 +470,101 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
     <div className="space-y-6">
       {/* Print Job Engine (Visible only during window.print) */}
       {activePrintJob && activePrintJob.type === 'thermal' && (
-        <div className="print-only print-receipt p-6 bg-white border border-slate-200 text-xs rounded">
-          <div className="text-center border-b border-slate-200 pb-3 mb-3 font-mono">
-            <h2 className="text-xl font-bold text-slate-800">NORANI KANTA ERP</h2>
-            <p className="text-xs text-slate-500">Material Purchase & Intake Bill</p>
-            <p className="text-[10px] text-slate-400 mt-0.5">Bill #: {activePrintJob.data.id}</p>
+        <div className="print-only print-receipt p-2 bg-white text-black font-mono">
+          <div className="text-center border-b-2 border-dashed border-black pb-2 mb-2">
+            <div className="flex justify-center mb-1">
+              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain mx-auto" />
+            </div>
+            <h2 className="text-sm font-black uppercase tracking-tight text-black">AL-MADINA CONSTRUCTION COMPANY</h2>
+            <p className="text-[11px] font-bold text-black mt-0.5">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+            <p className="text-[10px] font-semibold text-black">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WA)</p>
+            <div className="border-t border-dashed border-black my-1.5"></div>
+            <p className="text-xs font-black uppercase tracking-wider text-black">MATERIAL PURCHASE &amp; INTAKE BILL</p>
+            <div className="flex justify-between text-xs font-bold text-black mt-1">
+              <span>Bill #: {activePrintJob.data.id}</span>
+              <span>Date: {activePrintJob.data.date}</span>
+            </div>
           </div>
 
-          <div className="space-y-2 text-xs font-mono">
+          <div className="space-y-1 text-xs font-mono text-black border-b border-dashed border-black pb-2 mb-2">
             <div className="flex justify-between">
-              <span className="text-slate-500">Date:</span>
-              <span className="font-bold">{activePrintJob.data.date}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">Supplier:</span>
+              <span className="font-semibold">Supplier:</span>
               <span className="font-bold">{vendors.find(v => v.id === activePrintJob.data.vendorId)?.name || activePrintJob.data.vendorId}</span>
             </div>
             {activePrintJob.data.vehicleNo && (
               <div className="flex justify-between">
-                <span className="text-slate-500">Vehicle:</span>
+                <span className="font-semibold">Vehicle:</span>
                 <span className="font-bold">{activePrintJob.data.vehicleNo}</span>
               </div>
             )}
             {activePrintJob.data.driverName && (
               <div className="flex justify-between">
-                <span className="text-slate-500">Driver / Carrier:</span>
+                <span className="font-semibold">Driver / Carrier:</span>
                 <span className="font-bold">{activePrintJob.data.driverName}</span>
               </div>
             )}
             {activePrintJob.data.biltyNo && (
               <div className="flex justify-between">
-                <span className="text-slate-500">Bilty / Ref:</span>
+                <span className="font-semibold">Bilty / Ref:</span>
                 <span className="font-bold">{activePrintJob.data.biltyNo}</span>
               </div>
             )}
+          </div>
 
-            <hr className="border-slate-300 my-2" />
-
-            <table className="w-full text-left border-collapse my-2 font-mono text-[10px]">
-              <thead>
-                <tr className="border-b-2 border-dashed border-slate-400 font-bold uppercase text-slate-800">
-                  <th className="py-1 text-left">Material / Item</th>
-                  <th className="py-1 text-right whitespace-nowrap">Qty</th>
-                  <th className="py-1 text-center whitespace-nowrap">Unit</th>
-                  <th className="py-1 text-right whitespace-nowrap">Rate</th>
-                  <th className="py-1 text-right whitespace-nowrap">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-dashed divide-slate-200">
-                {activePrintJob.data.items && activePrintJob.data.items.length > 0 ? (
-                  activePrintJob.data.items.map((it, idx) => (
-                    <tr key={idx}>
-                      <td className="py-1 font-semibold text-slate-800 max-w-[85px] break-words">
-                        {it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}
-                      </td>
-                      <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">{it.quantity}</td>
-                      <td className="py-1 text-center text-slate-600 whitespace-nowrap">{it.unit}</td>
-                      <td className="py-1 text-right text-slate-600 whitespace-nowrap">Rs. {it.rate.toLocaleString()}</td>
-                      <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">Rs. {it.amount.toLocaleString()}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="py-1 font-semibold text-slate-800 max-w-[85px] break-words">
-                      {items.find(i => i.id === activePrintJob.data.itemId)?.name || activePrintJob.data.itemId}
+          <table className="w-full text-left border-collapse my-2 font-mono text-xs text-black">
+            <thead>
+              <tr className="border-b-2 border-dashed border-black font-bold uppercase">
+                <th className="py-1 text-left">Material / Item</th>
+                <th className="py-1 text-right whitespace-nowrap">Qty</th>
+                <th className="py-1 text-center whitespace-nowrap">Unit</th>
+                <th className="py-1 text-right whitespace-nowrap">Rate</th>
+                <th className="py-1 text-right whitespace-nowrap">Amount</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-dashed divide-slate-300">
+              {activePrintJob.data.items && activePrintJob.data.items.length > 0 ? (
+                activePrintJob.data.items.map((it, idx) => (
+                  <tr key={idx}>
+                    <td className="py-1 font-bold max-w-[85px] break-words">
+                      {it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}
                     </td>
-                    <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">{activePrintJob.data.quantity}</td>
-                    <td className="py-1 text-center text-slate-600 whitespace-nowrap">{items.find(i => i.id === activePrintJob.data.itemId)?.unit || 'Ton'}</td>
-                    <td className="py-1 text-right text-slate-600 whitespace-nowrap">Rs. {activePrintJob.data.rate.toLocaleString()}</td>
-                    <td className="py-1 text-right font-bold text-slate-900 whitespace-nowrap">Rs. {activePrintJob.data.total.toLocaleString()}</td>
+                    <td className="py-1 text-right font-bold whitespace-nowrap">{it.quantity}</td>
+                    <td className="py-1 text-center font-semibold whitespace-nowrap">{it.unit}</td>
+                    <td className="py-1 text-right font-semibold whitespace-nowrap">Rs. {it.rate.toLocaleString()}</td>
+                    <td className="py-1 text-right font-black whitespace-nowrap">Rs. {it.amount.toLocaleString()}</td>
                   </tr>
-                )}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-dashed border-slate-400 font-bold">
-                  <td colSpan={3} className="py-1 text-left">
-                    Total Items: {activePrintJob.data.items && activePrintJob.data.items.length > 0 ? activePrintJob.data.items.length : 1}
+                ))
+              ) : (
+                <tr>
+                  <td className="py-1 font-bold max-w-[85px] break-words">
+                    {items.find(i => i.id === activePrintJob.data.itemId)?.name || activePrintJob.data.itemId}
                   </td>
-                  <td className="py-1 text-right">Subtotal:</td>
-                  <td className="py-1 text-right font-black">Rs. {activePrintJob.data.total.toLocaleString()}</td>
+                  <td className="py-1 text-right font-bold whitespace-nowrap">{activePrintJob.data.quantity}</td>
+                  <td className="py-1 text-center font-semibold whitespace-nowrap">{items.find(i => i.id === activePrintJob.data.itemId)?.unit || 'Ton'}</td>
+                  <td className="py-1 text-right font-semibold whitespace-nowrap">Rs. {activePrintJob.data.rate.toLocaleString()}</td>
+                  <td className="py-1 text-right font-black whitespace-nowrap">Rs. {activePrintJob.data.total.toLocaleString()}</td>
                 </tr>
-              </tfoot>
-            </table>
+              )}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-dashed border-black font-bold">
+                <td colSpan={3} className="py-1 text-left">
+                  Total Items: {activePrintJob.data.items && activePrintJob.data.items.length > 0 ? activePrintJob.data.items.length : 1}
+                </td>
+                <td className="py-1 text-right font-bold">Subtotal:</td>
+                <td className="py-1 text-right font-black">Rs. {activePrintJob.data.total.toLocaleString()}</td>
+              </tr>
+            </tfoot>
+          </table>
 
-            <hr className="border-slate-300 my-2" />
-
-            <div className="flex justify-between text-sm font-bold text-slate-900 pt-1">
+          <div className="space-y-1 text-xs font-mono text-black">
+            <div className="flex justify-between font-black text-sm border-t-2 border-b-2 border-double border-black py-1 my-1">
               <span>Total Bill Amount:</span>
               <span>Rs. {activePrintJob.data.total.toLocaleString()}</span>
             </div>
-            <div className="flex justify-between text-xs text-slate-700">
+            <div className="flex justify-between font-semibold pt-1">
               <span>Paid Out ({activePrintJob.data.paymentType}):</span>
-              <span className="font-bold">Rs. {(activePrintJob.data.paidAmount !== undefined ? activePrintJob.data.paidAmount : activePrintJob.data.total).toLocaleString()}</span>
+              <span className="font-black">Rs. {(activePrintJob.data.paidAmount !== undefined ? activePrintJob.data.paidAmount : activePrintJob.data.total).toLocaleString()}</span>
             </div>
 
             {(() => {
@@ -564,31 +572,31 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
               const diff = activePrintJob.data.total - paid;
               if (diff > 0) {
                 return (
-                  <div className="flex justify-between text-rose-600 font-bold">
+                  <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
                     <span>Remaining Due (Payable):</span>
                     <span>Rs. {diff.toLocaleString()}</span>
                   </div>
                 );
               } else if (diff < 0) {
                 return (
-                  <div className="flex justify-between text-emerald-600 font-bold">
+                  <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
                     <span>Overpayment (Added to Advance):</span>
                     <span>+Rs. {(-diff).toLocaleString()}</span>
                   </div>
                 );
               } else {
                 return (
-                  <div className="flex justify-between text-emerald-600 font-bold">
-                    <span>Status:</span>
-                    <span>Paid in Full</span>
+                  <div className="flex justify-between font-bold pt-0.5">
+                    <span>Payment Status:</span>
+                    <span>✓ Paid in Full (Clear)</span>
                   </div>
                 );
               }
             })()}
           </div>
 
-          <div className="print-footer text-center mt-8 text-slate-500 text-[10px]">
-            Software by Roonjha Developer - 03152914836
+          <div className="print-footer text-center mt-4 text-[10px] font-bold font-mono">
+            Software by Roonjha Developers - 03152914836
           </div>
         </div>
       )}
@@ -597,9 +605,15 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
       {activePrintJob && activePrintJob.type === 'a4' && (
         <div className="print-only print-a4 p-8 bg-white font-mono text-xs">
           <div className="text-center border-b border-slate-300 pb-4 mb-6">
-            <h1 className="text-xl font-bold">NORANI KANTA & MATERIALS SUPPLY ERP</h1>
-            <p className="text-xs text-slate-500 mt-1">Material Purchase & Supplier Restock A4 Bill</p>
-            <p className="text-xs text-slate-500">Ph: 03152914836 | Software by Roonjha Developer</p>
+            <div className="flex items-center justify-center space-x-3 mb-2">
+              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+              <div>
+                <h1 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h1>
+                <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+                <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 font-bold tracking-wider uppercase mt-1">Material Purchase &amp; Supplier Restock A4 Bill</p>
           </div>
 
           <div className="grid grid-cols-2 gap-4 mb-6">
@@ -691,8 +705,8 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
             </div>
           </div>
 
-          <div className="print-footer text-center mt-12 text-slate-500 text-xs">
-            Software by Roonjha Developer - 03152914836
+          <div className="print-footer text-center mt-12 text-slate-500 text-xs font-mono">
+            Software by Roonjha Developers - 03152914836
           </div>
         </div>
       )}
@@ -755,9 +769,16 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
         {/* Purchases List */}
         <div className="print-a4 print-container space-y-4">
           <div className="hidden print:block text-center pb-4 border-b-2 border-slate-300">
-            <h2 className="text-2xl font-black text-slate-800 uppercase tracking-wide">NORANI KANTA & MATERIALS SUPPLY ERP</h2>
-            <p className="text-sm font-bold text-slate-500 tracking-wider uppercase mt-1">
-              MATERIAL PURCHASES & INVENTORY INTAKE REGISTER
+            <div className="flex items-center justify-center space-x-3 mb-2">
+              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain" />
+              <div>
+                <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide">AL-MADINA CONSTRUCTION COMPANY</h2>
+                <p className="text-xs text-slate-700 font-bold">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
+                <p className="text-[11px] text-slate-600">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WhatsApp)</p>
+              </div>
+            </div>
+            <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">
+              MATERIAL PURCHASES &amp; INVENTORY INTAKE REGISTER
             </p>
             <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
               <div>Total Purchases: {filteredPurchases.length}</div>
@@ -781,7 +802,7 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
-                  {filteredPurchases.map(p => {
+                  {paginatedPurchases.map(p => {
                     const vend = vendors.find(v => v.id === p.vendorId);
                     const singleItem = items.find(i => i.id === p.itemId);
 
@@ -895,10 +916,18 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
                 )}
               </table>
             </div>
+
+            <Pagination
+              currentPage={currentPage}
+              totalItems={filteredPurchases.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setPageSize}
+            />
           </div>
 
           <div className="print-footer text-center mt-6 text-xs text-slate-500 font-mono">
-            Software by Roonjha Developer - 03152914836
+            Software by Roonjha Developers - 03152914836
           </div>
         </div>
       </div>
