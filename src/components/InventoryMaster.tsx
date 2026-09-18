@@ -1035,6 +1035,7 @@ export default function InventoryMaster() {
                   <input
                     type="number"
                     min="0"
+                    step="any"
                     required
                     value={minStock}
                     onChange={e => setMinStock(Number(e.target.value))}
@@ -1051,6 +1052,7 @@ export default function InventoryMaster() {
                   <input
                     type="number"
                     min="0"
+                    step="any"
                     required
                     value={purchaseRate}
                     onChange={e => setPurchaseRate(Number(e.target.value))}
@@ -1065,6 +1067,7 @@ export default function InventoryMaster() {
                   <input
                     type="number"
                     min="0"
+                    step="any"
                     required
                     value={saleRate}
                     onChange={e => setSaleRate(Number(e.target.value))}
@@ -1079,6 +1082,7 @@ export default function InventoryMaster() {
                 </label>
                 <input
                   type="number"
+                  step="any"
                   required
                   value={currentStock}
                   onChange={e => setCurrentStock(Number(e.target.value))}

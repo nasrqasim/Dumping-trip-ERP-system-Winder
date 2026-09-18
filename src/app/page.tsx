@@ -12,7 +12,6 @@ import Vendors from '../components/Vendors';
 import Vehicles from '../components/Vehicles';
 import TripEntry from '../components/TripEntry';
 import POSCounter from '../components/POSCounter';
-import PurchaseEntry from '../components/PurchaseEntry';
 import DirectPurchases from '../components/DirectPurchases';
 import DieselManagement from '../components/DieselManagement';
 import VehicleMaintenance from '../components/VehicleMaintenance';
@@ -94,7 +93,7 @@ function ERPAppContent() {
         <Vendors 
           onNavigateToPurchase={(vid) => {
             setPreselectedVendorId(vid);
-            setActiveTab('purchase_entry');
+            setActiveTab('direct_purchases');
           }} 
         />
       )}
@@ -106,12 +105,6 @@ function ERPAppContent() {
         <POSCounter 
           preselectedCustomerId={preselectedCustomerId} 
           onClearPreselectedCustomer={() => setPreselectedCustomerId('')} 
-        />
-      )}
-      {activeTab === 'purchase_entry' && (
-        <PurchaseEntry 
-          preselectedVendorId={preselectedVendorId} 
-          onClearPreselectedVendor={() => setPreselectedVendorId('')} 
         />
       )}
       {activeTab === 'direct_purchases' && <DirectPurchases />}

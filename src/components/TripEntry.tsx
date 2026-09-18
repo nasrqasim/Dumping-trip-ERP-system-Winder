@@ -10,13 +10,15 @@ import {
   DBBank, 
   DBTripExpense, 
   DBTripItem,
-  DBStaff
+  DBStaff,
+  DBVendor,
+  DBDieselTransaction
 } from '../db/firestore';
-import { calculateLiveBalances, LiveBalances, saveTripTransaction, deleteTripTransaction } from '../db/transactions';
+import { calculateLiveBalances, LiveBalances, saveTripTransaction, deleteTripTransaction, saveDieselTransaction } from '../db/transactions';
 import { 
   Truck, Plus, Trash, Edit, ArrowRight, Printer, AlertTriangle, Download, 
   Search, X, FileText, UserCheck, Wallet, ShieldAlert, Calendar, Clock, 
-  MapPin, Gauge, Timer, CheckCircle, Navigation, Layers, Info
+  MapPin, Gauge, Timer, CheckCircle, Navigation, Layers, Info, Fuel
 } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import Pagination from './Pagination';
@@ -126,11 +128,32 @@ export default function TripEntry() {
   const [quickQty, setQuickQty] = useState<number>(0);
   const [quickRate, setQuickRate] = useState<number>(0);
 
+  const [vendors, setVendors] = useState<DBVendor[]>([]);
+
+  // Dedicated Trip Diesel States
+  const [tripDieselVendorId, setTripDieselVendorId] = useState('');
+  const [tripDieselLitres, setTripDieselLitres] = useState<number | ''>('');
+  const [tripDieselRate, setTripDieselRate] = useState<number | ''>(280);
+  const [tripDieselAmount, setTripDieselAmount] = useState<number>(0);
+  const [tripDieselSlipNo, setTripDieselSlipNo] = useState('');
+  const [tripDieselPaymentType, setTripDieselPaymentType] = useState<'Credit' | 'Cash' | 'Bank'>('Credit');
+  const [tripDieselBankId, setTripDieselBankId] = useState('');
+
   // Trip Expenses State
   const [expenses, setExpenses] = useState<DBTripExpense[]>([]);
-  const [currentExpCategory, setCurrentExpCategory] = useState('Diesel');
+  const [currentExpCategory, setCurrentExpCategory] = useState('Food / Kharcha');
   const [currentExpAmount, setCurrentExpAmount] = useState(0);
   const [currentExpDesc, setCurrentExpDesc] = useState('');
+
+  const handleTripDieselChange = (newLitres: number | '', newRate: number | '') => {
+    setTripDieselLitres(newLitres);
+    setTripDieselRate(newRate);
+    if (typeof newLitres === 'number' && typeof newRate === 'number' && newLitres > 0 && newRate > 0) {
+      setTripDieselAmount(Math.round(newLitres * newRate));
+    } else {
+      setTripDieselAmount(0);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -152,20 +175,25 @@ export default function TripEntry() {
       }
       setCustomers(allCustomers);
 
-      const [allItems, allVehicles, allStaff, allBanks, allTrips] = await Promise.all([
+      const [allItems, allVehicles, allStaff, allBanks, allTrips, allVendors] = await Promise.all([
         getAllRecords<DBItem>('items'),
         getAllRecords<DBVehicle>('vehicles'),
         getAllRecords<DBStaff>('staff'),
         getAllRecords<DBBank>('banks'),
-        getAllRecords<DBTrip>('trips')
+        getAllRecords<DBTrip>('trips'),
+        getAllRecords<DBVendor>('vendors')
       ]);
 
       setItems(allItems);
       setVehicles(allVehicles);
       setStaffList(allStaff);
       setBanks(allBanks);
+      setVendors(allVendors);
       if (allBanks.length > 0 && !bankId) {
         setBankId(allBanks[0].id);
+      }
+      if (allBanks.length > 0 && !tripDieselBankId) {
+        setTripDieselBankId(allBanks[0].id);
       }
 
       allTrips.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -378,7 +406,20 @@ export default function TripEntry() {
       setBankId(trip.bankId || (banks.length > 0 ? banks[0].id : ''));
       setFrom(trip.from || '');
       setTo(trip.to || '');
-      setExpenses(trip.expenses || []);
+      
+      // Load diesel from expenses if present
+      const dExp = trip.expenses?.find(e => e.category === 'Diesel');
+      if (dExp) {
+        setTripDieselAmount(dExp.amount);
+        setTripDieselLitres(dExp.amount > 0 && tripDieselRate ? Math.round((dExp.amount / (Number(tripDieselRate) || 280)) * 10) / 10 : '');
+      } else {
+        setTripDieselAmount(0);
+        setTripDieselLitres('');
+      }
+      setTripDieselVendorId('');
+      setTripDieselSlipNo('');
+      setTripDieselPaymentType('Credit');
+      setExpenses((trip.expenses || []).filter(e => e.category !== 'Diesel'));
     } else {
       setEditingId(null);
       setBillingType('fixed');
@@ -407,6 +448,13 @@ export default function TripEntry() {
       setFrom('');
       setTo('');
       setExpenses([]);
+      setTripDieselVendorId('');
+      setTripDieselLitres('');
+      setTripDieselRate(280);
+      setTripDieselAmount(0);
+      setTripDieselSlipNo('');
+      setTripDieselPaymentType('Credit');
+      setTripDieselBankId(banks.length > 0 ? banks[0].id : '');
     }
     setQuickItemId('');
     setQuickQty(0);
@@ -438,8 +486,9 @@ export default function TripEntry() {
   // Calculations
   const validItems = tripItems.filter(i => i.itemId && i.quantity > 0);
   const materialTotal = validItems.reduce((sum, itm) => sum + itm.amount, 0);
-  const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-  const grossTotal = materialTotal + vehicleCharges + totalExpenses;
+  const otherExpenses = expenses.filter(e => e.category !== 'Diesel').reduce((sum, exp) => sum + exp.amount, 0);
+  const totalExpenses = otherExpenses + tripDieselAmount;
+  const grossTotal = materialTotal + vehicleCharges;
   const grandTotal = Math.max(0, grossTotal - discount);
   const netTripProfit = vehicleCharges - totalExpenses;
 
@@ -561,11 +610,18 @@ export default function TripEntry() {
       remainingBalance: (Number(grandTotal) || 0) - (Number(paidAmount) || 0),
       paymentType,
       bankId: paymentType === 'Bank' ? bankId : undefined,
-      expenses: expenses.map(e => ({
-        category: e.category,
-        amount: Number(e.amount) || 0,
-        description: e.description || '',
-      })),
+      expenses: [
+        ...expenses.filter(e => e.category !== 'Diesel').map(e => ({
+          category: e.category,
+          amount: Number(e.amount) || 0,
+          description: e.description || '',
+        })),
+        ...(tripDieselAmount > 0 ? [{
+          category: 'Diesel',
+          amount: tripDieselAmount,
+          description: `Diesel: ${tripDieselLitres}L @ Rs. ${tripDieselRate}/L (${vendors.find(v => v.id === tripDieselVendorId)?.name || 'Fuel Pump'})`
+        }] : [])
+      ],
       totalExpenses: Number(totalExpenses) || 0,
       netTripProfit: Number(netTripProfit) || 0,
       from: from ? from.trim() : '',
@@ -574,6 +630,35 @@ export default function TripEntry() {
 
     try {
       await saveTripTransaction(trip);
+
+      // Automatically sync diesel entry to diesel_transactions page
+      if (tripDieselAmount > 0) {
+        const dieselTxId = `dsl-${tripId}`;
+        const selectedPump = vendors.find(v => v.id === tripDieselVendorId);
+        const dieselTx: DBDieselTransaction = {
+          id: dieselTxId,
+          date,
+          vehicleId: vehicleId.trim() || 'unassigned',
+          vehicleNumber: vehicles.find(v => v.id === vehicleId)?.number || vehicleId || undefined,
+          driverName: driverName.trim() || undefined,
+          vendorId: tripDieselVendorId || 'walk-in-pump',
+          vendorName: selectedPump?.name || 'Fuel Pump',
+          fuelPumpName: selectedPump?.name || 'Fuel Pump',
+          slipNo: tripDieselSlipNo.trim() || undefined,
+          litres: Number(tripDieselLitres) || 0,
+          ratePerLitre: Number(tripDieselRate) || 0,
+          totalAmount: tripDieselAmount,
+          paidAmount: tripDieselPaymentType === 'Credit' ? 0 : tripDieselAmount,
+          remainingBalance: tripDieselPaymentType === 'Credit' ? tripDieselAmount : 0,
+          paymentType: tripDieselPaymentType,
+          bankId: tripDieselPaymentType === 'Bank' ? tripDieselBankId : undefined,
+          fuelType: 'Diesel',
+          tripId: tripId,
+          notes: `Trip ${tripId} Fuel - Route: ${from || 'Base'} to ${to || 'Site'}`
+        };
+        await saveDieselTransaction(dieselTx);
+      }
+
       setIsFormOpen(false);
       await loadData();
       if (confirm('Print Receipt?\nDispatch / Rental voucher created successfully.')) {
@@ -1777,18 +1862,20 @@ export default function TripEntry() {
                   <input
                     type="number"
                     min="0"
-                    placeholder="Qty"
+                    step="any"
+                    placeholder="Qty (e.g. 650.50)"
                     value={quickQty === 0 ? '' : quickQty}
                     onChange={e => setQuickQty(e.target.value === '' ? 0 : Number(e.target.value))}
-                    className="w-20 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                    className="w-28 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold"
                   />
                   <input
                     type="number"
                     min="0"
-                    placeholder="Rate"
+                    step="any"
+                    placeholder="Rate (Rs.)"
                     value={quickRate === 0 ? '' : quickRate}
                     onChange={e => setQuickRate(e.target.value === '' ? 0 : Number(e.target.value))}
-                    className="w-24 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                    className="w-24 px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold"
                   />
                   <button
                     type="button"
@@ -1812,7 +1899,7 @@ export default function TripEntry() {
                           <option value="">-- No Material Selected --</option>
                           {items.map(i => (
                             <option key={i.id} value={i.id}>
-                              {i.name} (Stock: {balances?.itemStocks[i.id] || 0} {i.unit})
+                              {i.name} ({i.unit})
                             </option>
                           ))}
                         </select>
@@ -1821,9 +1908,10 @@ export default function TripEntry() {
                         <input
                           type="number"
                           min="0"
+                          step="any"
                           value={row.quantity === 0 ? '' : row.quantity}
                           onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
-                          placeholder="Qty"
+                          placeholder="Qty (650.50)"
                           className="w-full px-2 py-1.5 border border-slate-300 rounded-lg text-xs text-right font-semibold"
                         />
                       </div>
@@ -1831,6 +1919,7 @@ export default function TripEntry() {
                         <input
                           type="number"
                           min="0"
+                          step="any"
                           value={row.rate === 0 ? '' : row.rate}
                           onChange={e => handleItemChange(idx, 'rate', e.target.value)}
                           placeholder="Rate"
@@ -1854,11 +1943,139 @@ export default function TripEntry() {
                 </div>
               </div>
 
-              {/* Trip Expenses Breakdown (Toll, Diesel, Food, Mistri) */}
+              {/* Dedicated Diesel / Fuel Section (Syncs directly with Diesel Management page) */}
+              <div className="bg-gradient-to-br from-amber-50 to-orange-50/50 border-2 border-amber-300 rounded-xl p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200 pb-2">
+                  <div className="flex items-center space-x-2">
+                    <Fuel className="h-5 w-5 text-amber-600" />
+                    <div>
+                      <h4 className="text-xs font-bold text-amber-950 uppercase tracking-wider">
+                        Trip Diesel &amp; Fueling (ڈیزل اندراج - خودکار ڈیزل پیج اور پمپ کھاتہ میں جائے گا)
+                      </h4>
+                      <p className="text-[11px] text-amber-700">
+                        Fuel refilled for this trip will automatically appear on Diesel Management page
+                      </p>
+                    </div>
+                  </div>
+                  {tripDieselAmount > 0 && (
+                    <span className="text-xs font-black text-amber-900 bg-amber-200 px-2.5 py-1 rounded-md border border-amber-300">
+                      Total Diesel: Rs. {tripDieselAmount.toLocaleString()} ({tripDieselLitres} Litres)
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 bg-white p-3.5 rounded-xl border border-amber-200">
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                      Fuel Pump / Vendor (پمپ یا وینڈر منتخب کریں)
+                    </label>
+                    <SearchableSelect
+                      options={[
+                        { value: '', label: '-- Select Fuel Pump Vendor --' },
+                        ...vendors.map(v => ({
+                          value: v.id,
+                          label: v.name,
+                          subLabel: `${v.category || 'Fuel Supplier'} • Outstanding: Rs. ${(balances?.vendorBalances[v.id]?.outstanding || 0).toLocaleString()}`,
+                          searchTerms: `${v.name} ${v.phone || ''}`
+                        }))
+                      ]}
+                      value={tripDieselVendorId}
+                      onChange={val => setTripDieselVendorId(val)}
+                      placeholder="Select Fuel Pump..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                      Litres Filled (لیٹر)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      placeholder="e.g. 80"
+                      value={tripDieselLitres === 0 ? '' : tripDieselLitres}
+                      onChange={e => handleTripDieselChange(e.target.value === '' ? '' : Number(e.target.value), tripDieselRate)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                      Rate / Litre (ریٹ)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      placeholder="280"
+                      value={tripDieselRate === '' ? '' : tripDieselRate}
+                      onChange={e => handleTripDieselChange(tripDieselLitres, e.target.value === '' ? '' : Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                      Slip / Invoice #
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Pump Slip #"
+                      value={tripDieselSlipNo}
+                      onChange={e => setTripDieselSlipNo(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                      Payment Mode
+                    </label>
+                    <select
+                      value={tripDieselPaymentType}
+                      onChange={e => setTripDieselPaymentType(e.target.value as any)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
+                    >
+                      <option value="Credit">Credit / Pay Later (پمپ ادھار کھاتہ)</option>
+                      <option value="Cash">Cash (روکڑا ادائیگی)</option>
+                      <option value="Bank">Bank Transfer (بینک ادائیگی)</option>
+                    </select>
+                  </div>
+
+                  {tripDieselPaymentType === 'Bank' && (
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                        Bank Account
+                      </label>
+                      <select
+                        value={tripDieselBankId}
+                        onChange={e => setTripDieselBankId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
+                      >
+                        {banks.map(b => (
+                          <option key={b.id} value={b.id}>{b.name} - {b.accountNumber}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="sm:col-span-2 md:col-span-3 lg:col-span-6 flex justify-between items-center bg-amber-100/50 p-2.5 rounded-lg border border-amber-200">
+                    <span className="text-xs font-bold text-amber-900">
+                      Calculated Diesel Cost:
+                    </span>
+                    <span className="text-sm font-black text-amber-950">
+                      Rs. {tripDieselAmount.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Trip Expenses Breakdown (Toll, Food, Mistri, etc.) */}
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                    Trip Expenses &amp; Commissions (ٹرپ اخراجات اور کمیشن)
+                    Other Route Expenses &amp; Tolls (ٹول پلازہ، کھانا، مستری خرچہ)
                   </h4>
                   <span className="text-xs font-bold text-rose-600">
                     Total: Rs. {totalExpenses.toLocaleString()}

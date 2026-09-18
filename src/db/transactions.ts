@@ -706,6 +706,15 @@ export async function deleteTripTransaction(tripId: string): Promise<void> {
 
   await deleteRecord('trips', tripId);
   await clearLedgersForTransaction(tripId);
+
+  // Clean up linked diesel transaction if any
+  try {
+    const dieselId = `dsl-${tripId}`;
+    await deleteRecord('diesel_transactions', dieselId);
+    await clearLedgersForTransaction(dieselId);
+  } catch (err) {
+    // ignore
+  }
 }
 
 export async function savePurchaseTransaction(purchase: DBPurchase): Promise<void> {
@@ -903,6 +912,15 @@ export async function saveSaleTransaction(sale: DBSale): Promise<void> {
 export async function deleteSaleTransaction(saleId: string): Promise<void> {
   await deleteRecord('sales', saleId);
   await clearLedgersForTransaction(saleId);
+
+  // Clean up linked diesel transaction if any
+  try {
+    const dieselId = `dsl-${saleId}`;
+    await deleteRecord('diesel_transactions', dieselId);
+    await clearLedgersForTransaction(dieselId);
+  } catch (err) {
+    // ignore
+  }
 }
 
 // Receipt/Payment Vouchers for Customers/Vendors

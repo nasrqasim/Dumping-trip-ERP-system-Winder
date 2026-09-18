@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { getAllRecords, DBSale, DBCustomer, DBItem, DBBank } from '../db/firestore';
-import { calculateLiveBalances, LiveBalances, saveSaleTransaction } from '../db/transactions';
-import { ShoppingCart, User, Plus, Search, Trash, Printer, History } from 'lucide-react';
+import { getAllRecords, DBSale, DBCustomer, DBItem, DBBank, DBVendor, DBVehicle, DBStaff, DBDieselTransaction } from '../db/firestore';
+import { calculateLiveBalances, LiveBalances, saveSaleTransaction, saveDieselTransaction } from '../db/transactions';
+import { ShoppingCart, User, Plus, Search, Trash, Printer, History, Fuel, Truck, CheckCircle } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import Pagination from './Pagination';
 
@@ -14,8 +14,33 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
   const [items, setItems] = useState<DBItem[]>([]);
   const [customers, setCustomers] = useState<DBCustomer[]>([]);
   const [banks, setBanks] = useState<DBBank[]>([]);
+  const [vendors, setVendors] = useState<DBVendor[]>([]);
+  const [vehicles, setVehicles] = useState<DBVehicle[]>([]);
+  const [staffList, setStaffList] = useState<DBStaff[]>([]);
   const [balances, setBalances] = useState<LiveBalances | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Dedicated POS Diesel / Vehicle Fueling State
+  const [includeDiesel, setIncludeDiesel] = useState(false);
+  const [dieselVehicleId, setDieselVehicleId] = useState('');
+  const [dieselDriverName, setDieselDriverName] = useState('');
+  const [dieselVendorId, setDieselVendorId] = useState('');
+  const [dieselLitres, setDieselLitres] = useState<number | ''>('');
+  const [dieselRate, setDieselRate] = useState<number | ''>(280);
+  const [dieselTotal, setDieselTotal] = useState<number>(0);
+  const [dieselSlipNo, setDieselSlipNo] = useState('');
+  const [dieselPaymentType, setDieselPaymentType] = useState<'Credit' | 'Cash' | 'Bank'>('Credit');
+  const [dieselBankId, setDieselBankId] = useState('');
+
+  const handleDieselChange = (newLitres: number | '', newRate: number | '') => {
+    setDieselLitres(newLitres);
+    setDieselRate(newRate);
+    if (typeof newLitres === 'number' && typeof newRate === 'number' && newLitres > 0 && newRate > 0) {
+      setDieselTotal(Math.round(newLitres * newRate));
+    } else {
+      setDieselTotal(0);
+    }
+  };
 
   // Sales History List & Printing States
   const [sales, setSales] = useState<DBSale[]>([]);
@@ -34,9 +59,9 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
   // Form State
   const [customerId, setCustomerId] = useState(preselectedCustomerId || '');
   const [itemId, setItemId] = useState('');
-  const [quantity, setQuantity] = useState(0);
-  const [rate, setRate] = useState(0);
-  const [discount, setDiscount] = useState(0);
+  const [quantity, setQuantity] = useState<number | ''>('');
+  const [rate, setRate] = useState<number | ''>('');
+  const [discount, setDiscount] = useState<number>(0);
   const [paymentType, setPaymentType] = useState<'Cash' | 'Bank' | 'Credit' | 'Advance'>('Cash');
   const [paidAmount, setPaidAmount] = useState<number>(0);
   const [isPaidTouched, setIsPaidTouched] = useState<boolean>(false);
@@ -48,19 +73,29 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
 
   const loadData = async () => {
     try {
-      const allItems = await getAllRecords<DBItem>('items');
+      const [allItems, allCustomers, allBanks, allSales, allVendors, allVehicles, allStaff] = await Promise.all([
+        getAllRecords<DBItem>('items'),
+        getAllRecords<DBCustomer>('customers'),
+        getAllRecords<DBBank>('banks'),
+        getAllRecords<DBSale>('sales'),
+        getAllRecords<DBVendor>('vendors'),
+        getAllRecords<DBVehicle>('vehicles'),
+        getAllRecords<DBStaff>('staff')
+      ]);
+
       setItems(allItems);
-
-      const allCustomers = await getAllRecords<DBCustomer>('customers');
       setCustomers(allCustomers);
-
-      const allBanks = await getAllRecords<DBBank>('banks');
       setBanks(allBanks);
-      if (allBanks.length > 0) {
+      setVendors(allVendors);
+      setVehicles(allVehicles);
+      setStaffList(allStaff);
+      if (allBanks.length > 0 && !bankId) {
         setBankId(allBanks[0].id);
       }
+      if (allBanks.length > 0 && !dieselBankId) {
+        setDieselBankId(allBanks[0].id);
+      }
 
-      const allSales = await getAllRecords<DBSale>('sales');
       allSales.sort((a, b) => b.id.localeCompare(a.id));
       setSales(allSales);
 
@@ -108,26 +143,20 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
       alert('Please select a Material / Item to bill.');
       return;
     }
-    if (quantity <= 0) {
+    const numQty = Number(quantity) || 0;
+    const numRate = Number(rate) || 0;
+
+    if (numQty <= 0) {
       alert('Please specify a valid billing quantity greater than 0.');
       return;
     }
-    if (rate <= 0) {
+    if (numRate <= 0) {
       alert('Please enter a valid price rate.');
       return;
     }
 
-    const materialTotal = quantity * rate;
-    const total = materialTotal - discount;
-
-    if (balances && itemId) {
-      const stock = balances.itemStocks[itemId] !== undefined ? balances.itemStocks[itemId] : 0;
-      if (stock < quantity) {
-        if (!confirm(`Warning: Selected quantity (${quantity}) exceeds current available stock (${stock}). Proceed anyway?`)) {
-          return;
-        }
-      }
-    }
+    const materialTotal = Math.round(numQty * numRate * 100) / 100;
+    const total = Math.max(0, materialTotal - (Number(discount) || 0));
 
     const prefix = 'pos-';
     const existingIds = sales.map(s => s.id).filter(id => id.startsWith(prefix));
@@ -150,8 +179,8 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
       date: new Date().toISOString().split('T')[0],
       customerId: effectiveCustomerId,
       itemId,
-      quantity: Number(quantity) || 0,
-      rate: Number(rate) || 0,
+      quantity: numQty,
+      rate: numRate,
       discount: Number(discount) || 0,
       total: Number(total) || 0,
       paidAmount: finalPaid,
@@ -162,13 +191,53 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
 
     try {
       await saveSaleTransaction(sale);
+
+      // If diesel option was enabled, automatically save to diesel_transactions
+      if (includeDiesel && dieselTotal > 0) {
+        const dieselTxId = `dsl-${saleId}`;
+        const selectedPump = vendors.find(v => v.id === dieselVendorId);
+        const selectedVeh = vehicles.find(v => v.id === dieselVehicleId);
+        const dieselTx: DBDieselTransaction = {
+          id: dieselTxId,
+          date: new Date().toISOString().split('T')[0],
+          vehicleId: dieselVehicleId.trim() || 'unassigned',
+          vehicleNumber: selectedVeh?.number || dieselVehicleId || undefined,
+          driverName: dieselDriverName.trim() || undefined,
+          vendorId: dieselVendorId || 'walk-in-pump',
+          vendorName: selectedPump?.name || 'Fuel Pump',
+          fuelPumpName: selectedPump?.name || 'Fuel Pump',
+          slipNo: dieselSlipNo.trim() || undefined,
+          litres: Number(dieselLitres) || 0,
+          ratePerLitre: Number(dieselRate) || 0,
+          totalAmount: dieselTotal,
+          paidAmount: dieselPaymentType === 'Credit' ? 0 : dieselTotal,
+          remainingBalance: dieselPaymentType === 'Credit' ? dieselTotal : 0,
+          paymentType: dieselPaymentType,
+          bankId: dieselPaymentType === 'Bank' ? dieselBankId : undefined,
+          fuelType: 'Diesel',
+          tripId: saleId,
+          notes: `POS Sale ${saleId} Fuel Log`
+        };
+        await saveDieselTransaction(dieselTx);
+      }
+
       setLastSavedSale(sale);
       
       // Reset Form
-      setQuantity(0);
+      setQuantity('');
       setDiscount(0);
       setPaidAmount(0);
       setIsPaidTouched(false);
+      setIncludeDiesel(false);
+      setDieselVehicleId('');
+      setDieselDriverName('');
+      setDieselVendorId('');
+      setDieselLitres('');
+      setDieselRate(280);
+      setDieselTotal(0);
+      setDieselSlipNo('');
+      setDieselPaymentType('Credit');
+
       alert('POS Counter Sale completed successfully!');
       loadData();
     } catch (err: any) {
@@ -190,7 +259,7 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
   const selectedItemObj = items.find(i => i.id === itemId);
   const selectedCustObj = customers.find(c => c.id === customerId);
 
-  const subtotal = quantity * rate;
+  const subtotal = (Number(quantity) || 0) * (Number(rate) || 0);
   const grandTotal = subtotal - discount;
 
   // Filter items list by search query
@@ -524,17 +593,17 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                    Billing Quantity
+                    Billing Quantity (وزن / مقدار - پوائنٹس میں مثلاً 650.50)
                   </label>
                   <input
                     type="number"
-                    min="0.01"
-                    step="0.01"
+                    min="0.001"
+                    step="any"
                     required
-                    placeholder="0"
-                    value={quantity === 0 ? '' : quantity}
-                    onChange={e => setQuantity(e.target.value === '' ? 0 : Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                    placeholder="e.g. 560.26"
+                    value={quantity === '' ? '' : quantity}
+                    onChange={e => setQuantity(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold focus:outline-none focus:border-indigo-500"
                   />
                 </div>
 
@@ -545,10 +614,11 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
                   <input
                     type="number"
                     min="0"
+                    step="any"
                     required
-                    value={rate}
-                    onChange={e => setRate(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                    value={rate === '' ? '' : rate}
+                    onChange={e => setRate(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-bold focus:outline-none focus:border-indigo-500"
                   />
                 </div>
 
@@ -559,11 +629,117 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
                   <input
                     type="number"
                     min="0"
-                    value={discount}
-                    onChange={e => setDiscount(Number(e.target.value))}
+                    step="any"
+                    value={discount === 0 ? '' : discount}
+                    onChange={e => setDiscount(e.target.value === '' ? 0 : Number(e.target.value))}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
                   />
                 </div>
+              </div>
+
+              {/* Optional Diesel & Vehicle Fueling Section */}
+              <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={includeDiesel}
+                      onChange={e => setIncludeDiesel(e.target.checked)}
+                      className="h-4 w-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500"
+                    />
+                    <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                      <Fuel className="h-4 w-4 text-amber-600" />
+                      Add Diesel / Vehicle Fueling (ڈیزل اندراج - خودکار ڈیزل پیج میں شامل ہوگا)
+                    </span>
+                  </label>
+                  {includeDiesel && dieselTotal > 0 && (
+                    <span className="text-xs font-bold text-amber-900 bg-amber-200 px-2 py-0.5 rounded">
+                      Diesel: Rs. {dieselTotal.toLocaleString()} ({dieselLitres} L)
+                    </span>
+                  )}
+                </div>
+
+                {includeDiesel && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2 border-t border-amber-200/80 bg-white p-3 rounded-lg">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Vehicle (گاڑی)</label>
+                      <select
+                        value={dieselVehicleId}
+                        onChange={e => setDieselVehicleId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
+                      >
+                        <option value="">-- Direct / Third-Party --</option>
+                        {vehicles.map(v => (
+                          <option key={v.id} value={v.id}>{v.number} ({v.type || 'Truck'})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Driver Name</label>
+                      <input
+                        type="text"
+                        placeholder="Driver Name"
+                        value={dieselDriverName}
+                        onChange={e => setDieselDriverName(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Fuel Pump (وینڈر)</label>
+                      <select
+                        value={dieselVendorId}
+                        onChange={e => setDieselVendorId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
+                      >
+                        <option value="">-- Select Fuel Pump --</option>
+                        {vendors.map(v => (
+                          <option key={v.id} value={v.id}>{v.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Litres (لیٹر)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder="e.g. 50"
+                        value={dieselLitres === '' ? '' : dieselLitres}
+                        onChange={e => handleDieselChange(e.target.value === '' ? '' : Number(e.target.value), dieselRate)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Rate / Litre</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        placeholder="280"
+                        value={dieselRate === '' ? '' : dieselRate}
+                        onChange={e => handleDieselChange(dieselLitres, e.target.value === '' ? '' : Number(e.target.value))}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">Payment Mode</label>
+                      <select
+                        value={dieselPaymentType}
+                        onChange={e => setDieselPaymentType(e.target.value as any)}
+                        className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
+                      >
+                        <option value="Credit">Credit / Pump Ledger (پمپ کھاتہ)</option>
+                        <option value="Cash">Cash (روکڑا)</option>
+                        <option value="Bank">Bank Transfer</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
