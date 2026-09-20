@@ -135,13 +135,16 @@ export default function StaffManagement() {
   const [expCashReturned, setExpCashReturned] = useState<number>(0);
   const [expDate, setExpDate] = useState(new Date().toISOString().split('T')[0]);
 
+  const [editingAdvId, setEditingAdvId] = useState<string | null>(null);
+
   const defaultCategories = [
     'Driver',
+    'Caleender / Cleaner (کلینڈر)',
+    'Labour (مزدور)',
     'Munshi / Clerk',
     'Accountant',
     'Mechanic / Mistri',
     'Dohbi / Loader',
-    'Helper / Labour',
     'Chowkidar / Security',
     'Site Supervisor',
     'Management / Admin'
@@ -437,10 +440,35 @@ export default function StaffManagement() {
   };
 
   // Driver Advance Handlers
+  const handleOpenDriverAdvForm = (adv?: DBDriverAdvance) => {
+    if (adv) {
+      setEditingAdvId(adv.id);
+      setAdvDriverId(adv.driverId);
+      setAdvVehicleId(adv.vehicleId || '');
+      setAdvTripId(adv.tripId || '');
+      setAdvAmount(adv.amount);
+      setAdvPaymentType(adv.paymentType || 'Cash');
+      setAdvBankId(adv.bankId || (banks.length > 0 ? banks[0].id : ''));
+      setAdvPurpose(adv.purpose || 'Trip Advance');
+      setAdvDate(adv.date);
+    } else {
+      setEditingAdvId(null);
+      setAdvDriverId(staff.length > 0 ? staff[0].id : '');
+      setAdvVehicleId('');
+      setAdvTripId('');
+      setAdvAmount(0);
+      setAdvPaymentType('Cash');
+      setAdvBankId(banks.length > 0 ? banks[0].id : '');
+      setAdvPurpose('Route Fuel & Trip Expenses');
+      setAdvDate(new Date().toISOString().split('T')[0]);
+    }
+    setIsDriverAdvFormOpen(true);
+  };
+
   const handleSaveDriverAdvance = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!advDriverId) {
-      alert('Please select a driver.');
+      alert('Please select a driver / staff member.');
       return;
     }
     if (advAmount <= 0) {
@@ -448,14 +476,17 @@ export default function StaffManagement() {
       return;
     }
 
-    const prefix = 'dadv-';
-    const existingIds = driverAdvances.map(a => a.id).filter(id => id.startsWith(prefix));
-    let maxNum = 0;
-    for (const id of existingIds) {
-      const n = parseInt(id.replace(prefix, ''), 10);
-      if (!isNaN(n) && n > maxNum) maxNum = n;
+    let advId = editingAdvId;
+    if (!advId) {
+      const prefix = 'dadv-';
+      const existingIds = driverAdvances.map(a => a.id).filter(id => id.startsWith(prefix));
+      let maxNum = 0;
+      for (const id of existingIds) {
+        const n = parseInt(id.replace(prefix, ''), 10);
+        if (!isNaN(n) && n > maxNum) maxNum = n;
+      }
+      advId = `${prefix}${String(maxNum + 1).padStart(3, '0')}`;
     }
-    const advId = `${prefix}${String(maxNum + 1).padStart(3, '0')}`;
     const driver = staff.find(s => s.id === advDriverId);
 
     const adv: DBDriverAdvance = {
@@ -886,7 +917,14 @@ export default function StaffManagement() {
                         Rs. {p.netPaid.toLocaleString()}
                         <span className="block text-[10px] text-slate-400 uppercase font-medium">{p.paymentType}</span>
                       </td>
-                      <td className="px-5 py-3.5 text-right whitespace-nowrap no-print">
+                      <td className="px-5 py-3.5 text-right whitespace-nowrap no-print space-x-1">
+                        <button
+                          onClick={() => handleOpenPaymentForm(p)}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 transition"
+                          title="Edit Payment"
+                        >
+                          <Edit className="h-4 w-4 inline" />
+                        </button>
                         <button
                           onClick={() => handleDeletePayment(p.id)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 transition"
@@ -952,12 +990,20 @@ export default function StaffManagement() {
                         <td className="px-3 py-2.5 text-right font-black text-amber-900 whitespace-nowrap">
                           Rs. {adv.amount.toLocaleString()}
                         </td>
-                        <td className="px-3 py-2.5 text-right no-print">
+                        <td className="px-3 py-2.5 text-right no-print space-x-1">
+                          <button
+                            onClick={() => handleOpenDriverAdvForm(adv)}
+                            className="p-1 text-slate-400 hover:text-indigo-600"
+                            title="Edit Advance"
+                          >
+                            <Edit className="h-3.5 w-3.5 inline" />
+                          </button>
                           <button
                             onClick={() => handleDeleteDriverAdvance(adv.id)}
                             className="p-1 text-slate-400 hover:text-rose-600"
+                            title="Delete Advance"
                           >
-                            <Trash className="h-3.5 w-3.5" />
+                            <Trash className="h-3.5 w-3.5 inline" />
                           </button>
                         </td>
                       </tr>

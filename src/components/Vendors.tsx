@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getAllRecords, putRecord, deleteRecord, DBVendor, DBLedgerEntry, DBBank, DBVoucher, DBPurchase, DBItem } from '../db/firestore';
+import { getAllRecords, putRecord, deleteRecord, DBVendor, DBLedgerEntry, DBBank, DBVoucher, DBPurchase, DBItem, DBDieselTransaction, DBDirectPurchase } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances, saveVoucherTransaction } from '../db/transactions';
 import { Truck, Phone, MapPin, FileText, Plus, Edit, Trash, Printer, Search, X } from 'lucide-react';
 import Pagination from './Pagination';
@@ -14,6 +14,8 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
   const [balances, setBalances] = useState<LiveBalances | null>(null);
   const [ledgers, setLedgers] = useState<DBLedgerEntry[]>([]);
   const [purchases, setPurchases] = useState<DBPurchase[]>([]);
+  const [directPurchases, setDirectPurchases] = useState<DBDirectPurchase[]>([]);
+  const [dieselLogs, setDieselLogs] = useState<DBDieselTransaction[]>([]);
   const [items, setItems] = useState<DBItem[]>([]);
   const [vouchers, setVouchers] = useState<DBVoucher[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,19 +60,35 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
 
   const loadData = async () => {
     try {
-      const allVendors = await getAllRecords<DBVendor>('vendors');
-      const allBanks = await getAllRecords<DBBank>('banks');
-      const liveBal = await calculateLiveBalances();
-      const allLedgers = await getAllRecords<DBLedgerEntry>('ledgers');
-      const allPurchases = await getAllRecords<DBPurchase>('purchases');
-      const allItems = await getAllRecords<DBItem>('items');
-      const allVouchers = await getAllRecords<DBVoucher>('vouchers');
+      const [
+        allVendors,
+        allBanks,
+        liveBal,
+        allLedgers,
+        allPurchases,
+        allDirectPurchases,
+        allDiesel,
+        allItems,
+        allVouchers
+      ] = await Promise.all([
+        getAllRecords<DBVendor>('vendors'),
+        getAllRecords<DBBank>('banks'),
+        calculateLiveBalances(),
+        getAllRecords<DBLedgerEntry>('ledgers'),
+        getAllRecords<DBPurchase>('purchases'),
+        getAllRecords<DBDirectPurchase>('direct_purchases'),
+        getAllRecords<DBDieselTransaction>('diesel_transactions'),
+        getAllRecords<DBItem>('items'),
+        getAllRecords<DBVoucher>('vouchers')
+      ]);
       
       setVendors(allVendors);
       setBanks(allBanks);
       setBalances(liveBal);
       setLedgers(allLedgers);
       setPurchases(allPurchases);
+      setDirectPurchases(allDirectPurchases);
+      setDieselLogs(allDiesel);
       setItems(allItems);
       setVouchers(allVouchers);
       
@@ -339,7 +357,17 @@ export default function Vendors({ onNavigateToPurchase }: VendorsProps) {
       ledgerTotalCredit += entry.credit;
 
       let itemDetails = '';
-      if (entry.type === 'purchase') {
+      if (entry.type === 'diesel') {
+        const dsl = dieselLogs.find(d => d.id === entry.referenceId);
+        if (dsl) {
+          itemDetails = `Fuel: ${dsl.litres}L ${dsl.fuelType || 'Diesel'} @ Rs.${dsl.ratePerLitre.toLocaleString()}/L | Veh: ${dsl.vehicleNumber || dsl.vehicleId || 'Bulk'}${dsl.slipNo ? ` | Slip #${dsl.slipNo}` : ''} | Total: Rs.${dsl.totalAmount.toLocaleString()} | Paid: Rs.${dsl.paidAmount.toLocaleString()} | Due: Rs.${dsl.remainingBalance.toLocaleString()}`;
+        }
+      } else if (entry.type === 'direct_purchase') {
+        const dp = directPurchases.find(p => p.id === entry.referenceId);
+        if (dp) {
+          itemDetails = `Category: ${dp.category} - ${dp.description} ${dp.quantity ? `| Qty: ${dp.quantity} ${dp.unit || ''} @ Rs.${dp.rate || 0}` : ''} | Total: Rs.${dp.total.toLocaleString()} | Paid: Rs.${dp.paidAmount.toLocaleString()}`;
+        }
+      } else if (entry.type === 'purchase') {
         const purchase = purchases.find(p => p.id === entry.referenceId);
         if (purchase) {
           const itemObj = items.find(i => i.id === purchase.itemId);

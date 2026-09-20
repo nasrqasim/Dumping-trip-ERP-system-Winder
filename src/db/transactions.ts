@@ -601,10 +601,9 @@ export async function saveTripTransaction(trip: DBTrip): Promise<void> {
     });
   }
 
-  // 6. Record Trip Expenses in Ledger
-  // Each internal expense decreases cash (default) or bank and increases trip expense
+  // 6. Record Trip Expenses in Ledger (Non-Diesel expenses; Diesel is tracked via dedicated synced diesel transaction)
   for (const exp of trip.expenses) {
-    if (exp.amount <= 0) continue;
+    if (exp.amount <= 0 || exp.category === 'Diesel') continue;
     
     // Debit: Trip Expenses
     await putRecord<DBLedgerEntry>('ledgers', {
@@ -712,6 +711,23 @@ export async function deleteTripTransaction(tripId: string): Promise<void> {
     const dieselId = `dsl-${tripId}`;
     await deleteRecord('diesel_transactions', dieselId);
     await clearLedgersForTransaction(dieselId);
+  } catch (err) {
+    // ignore
+  }
+
+  // Clean up linked driver trip advance and expense settlements if any
+  try {
+    const advId = `dadv-trp-${tripId}`;
+    await deleteRecord('driver_advances', advId);
+    await clearLedgersForTransaction(advId);
+  } catch (err) {
+    // ignore
+  }
+
+  try {
+    const dexpId = `dexp-trp-${tripId}`;
+    await deleteRecord('driver_expenses', dexpId);
+    await clearLedgersForTransaction(dexpId);
   } catch (err) {
     // ignore
   }

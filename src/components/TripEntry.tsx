@@ -12,9 +12,19 @@ import {
   DBTripItem,
   DBStaff,
   DBVendor,
-  DBDieselTransaction
+  DBDieselTransaction,
+  DBDriverAdvance,
+  DBDriverExpenseSubmission
 } from '../db/firestore';
-import { calculateLiveBalances, LiveBalances, saveTripTransaction, deleteTripTransaction, saveDieselTransaction } from '../db/transactions';
+import { 
+  calculateLiveBalances, 
+  LiveBalances, 
+  saveTripTransaction, 
+  deleteTripTransaction, 
+  saveDieselTransaction,
+  saveDriverAdvanceTransaction,
+  saveDriverExpenseSettlementTransaction
+} from '../db/transactions';
 import { 
   Truck, Plus, Trash, Edit, ArrowRight, Printer, AlertTriangle, Download, 
   Search, X, FileText, UserCheck, Wallet, ShieldAlert, Calendar, Clock, 
@@ -135,9 +145,18 @@ export default function TripEntry() {
   const [tripDieselLitres, setTripDieselLitres] = useState<number | ''>('');
   const [tripDieselRate, setTripDieselRate] = useState<number | ''>(280);
   const [tripDieselAmount, setTripDieselAmount] = useState<number>(0);
+  const [tripDieselPaidAmount, setTripDieselPaidAmount] = useState<number | ''>(0);
+  const [isDieselPaidTouched, setIsDieselPaidTouched] = useState<boolean>(false);
   const [tripDieselSlipNo, setTripDieselSlipNo] = useState('');
   const [tripDieselPaymentType, setTripDieselPaymentType] = useState<'Credit' | 'Cash' | 'Bank'>('Credit');
   const [tripDieselBankId, setTripDieselBankId] = useState('');
+
+  // Driver Advance & Trip Settlement States
+  const [driverAdvanceDeducted, setDriverAdvanceDeducted] = useState<number | ''>('');
+  const [newDriverAdvance, setNewDriverAdvance] = useState<number | ''>('');
+  const [newDriverAdvancePaymentType, setNewDriverAdvancePaymentType] = useState<'Cash' | 'Bank'>('Cash');
+  const [newDriverAdvanceBankId, setNewDriverAdvanceBankId] = useState('');
+  const [newDriverAdvancePurpose, setNewDriverAdvancePurpose] = useState('Trip Advance & Route Kharcha');
 
   // Trip Expenses State
   const [expenses, setExpenses] = useState<DBTripExpense[]>([]);
@@ -149,9 +168,29 @@ export default function TripEntry() {
     setTripDieselLitres(newLitres);
     setTripDieselRate(newRate);
     if (typeof newLitres === 'number' && typeof newRate === 'number' && newLitres > 0 && newRate > 0) {
-      setTripDieselAmount(Math.round(newLitres * newRate));
+      const calcTot = Math.round(newLitres * newRate);
+      setTripDieselAmount(calcTot);
+      if (!isDieselPaidTouched) {
+        if (tripDieselPaymentType === 'Cash' || tripDieselPaymentType === 'Bank') {
+          setTripDieselPaidAmount(calcTot);
+        } else {
+          setTripDieselPaidAmount(0);
+        }
+      }
     } else {
       setTripDieselAmount(0);
+      if (!isDieselPaidTouched) setTripDieselPaidAmount(0);
+    }
+  };
+
+  const handleTripDieselPaymentTypeChange = (newType: 'Credit' | 'Cash' | 'Bank') => {
+    setTripDieselPaymentType(newType);
+    if (!isDieselPaidTouched) {
+      if (newType === 'Cash' || newType === 'Bank') {
+        setTripDieselPaidAmount(tripDieselAmount);
+      } else {
+        setTripDieselPaidAmount(0);
+      }
     }
   };
 
@@ -411,15 +450,24 @@ export default function TripEntry() {
       const dExp = trip.expenses?.find(e => e.category === 'Diesel');
       if (dExp) {
         setTripDieselAmount(dExp.amount);
+        setTripDieselPaidAmount(0);
+        setIsDieselPaidTouched(false);
         setTripDieselLitres(dExp.amount > 0 && tripDieselRate ? Math.round((dExp.amount / (Number(tripDieselRate) || 280)) * 10) / 10 : '');
       } else {
         setTripDieselAmount(0);
+        setTripDieselPaidAmount(0);
+        setIsDieselPaidTouched(false);
         setTripDieselLitres('');
       }
       setTripDieselVendorId('');
       setTripDieselSlipNo('');
       setTripDieselPaymentType('Credit');
       setExpenses((trip.expenses || []).filter(e => e.category !== 'Diesel'));
+      setDriverAdvanceDeducted('');
+      setNewDriverAdvance('');
+      setNewDriverAdvancePaymentType('Cash');
+      setNewDriverAdvanceBankId(banks.length > 0 ? banks[0].id : '');
+      setNewDriverAdvancePurpose('Trip Advance & Route Kharcha');
     } else {
       setEditingId(null);
       setBillingType('fixed');
@@ -452,9 +500,16 @@ export default function TripEntry() {
       setTripDieselLitres('');
       setTripDieselRate(280);
       setTripDieselAmount(0);
+      setTripDieselPaidAmount(0);
+      setIsDieselPaidTouched(false);
       setTripDieselSlipNo('');
       setTripDieselPaymentType('Credit');
       setTripDieselBankId(banks.length > 0 ? banks[0].id : '');
+      setDriverAdvanceDeducted('');
+      setNewDriverAdvance('');
+      setNewDriverAdvancePaymentType('Cash');
+      setNewDriverAdvanceBankId(banks.length > 0 ? banks[0].id : '');
+      setNewDriverAdvancePurpose('Trip Advance & Route Kharcha');
     }
     setQuickItemId('');
     setQuickQty(0);
@@ -635,6 +690,9 @@ export default function TripEntry() {
       if (tripDieselAmount > 0) {
         const dieselTxId = `dsl-${tripId}`;
         const selectedPump = vendors.find(v => v.id === tripDieselVendorId);
+        const actualDieselPaid = typeof tripDieselPaidAmount === 'number' ? tripDieselPaidAmount : (tripDieselPaymentType === 'Credit' ? 0 : tripDieselAmount);
+        const remainingDieselBal = Math.max(0, tripDieselAmount - actualDieselPaid);
+
         const dieselTx: DBDieselTransaction = {
           id: dieselTxId,
           date,
@@ -648,8 +706,8 @@ export default function TripEntry() {
           litres: Number(tripDieselLitres) || 0,
           ratePerLitre: Number(tripDieselRate) || 0,
           totalAmount: tripDieselAmount,
-          paidAmount: tripDieselPaymentType === 'Credit' ? 0 : tripDieselAmount,
-          remainingBalance: tripDieselPaymentType === 'Credit' ? tripDieselAmount : 0,
+          paidAmount: actualDieselPaid,
+          remainingBalance: remainingDieselBal,
           paymentType: tripDieselPaymentType,
           bankId: tripDieselPaymentType === 'Bank' ? tripDieselBankId : undefined,
           fuelType: 'Diesel',
@@ -657,6 +715,48 @@ export default function TripEntry() {
           notes: `Trip ${tripId} Fuel - Route: ${from || 'Base'} to ${to || 'Site'}`
         };
         await saveDieselTransaction(dieselTx);
+      }
+
+      // Sync Driver Advance Deduction if any
+      const driverStaff = staffList.find(s => s.name.toLowerCase() === driverName.trim().toLowerCase()) 
+        || (vehicleId ? staffList.find(s => s.id === vehicles.find(v => v.id === vehicleId)?.driverId) : undefined);
+
+      if (typeof driverAdvanceDeducted === 'number' && driverAdvanceDeducted > 0 && driverStaff) {
+        const dexpId = `dexp-trp-${tripId}`;
+        const sub: DBDriverExpenseSubmission = {
+          id: dexpId,
+          date,
+          driverId: driverStaff.id,
+          driverName: driverStaff.name,
+          vehicleId: vehicleId.trim() || undefined,
+          tripId: tripId,
+          category: 'Trip Advance Deduction',
+          description: `Trip ${tripId} Advance Cut / Deduction (پیشگی کٹوتی) - ${from || 'Base'} to ${to || 'Site'}`,
+          amountClaimed: Number(driverAdvanceDeducted),
+          amountApproved: Number(driverAdvanceDeducted),
+          amountRejected: 0,
+          status: 'Settled'
+        };
+        await saveDriverExpenseSettlementTransaction(sub);
+      }
+
+      // Sync New Driver Advance Issued for this Trip if any
+      if (typeof newDriverAdvance === 'number' && newDriverAdvance > 0 && driverStaff) {
+        const dadvId = `dadv-trp-${tripId}`;
+        const adv: DBDriverAdvance = {
+          id: dadvId,
+          date,
+          driverId: driverStaff.id,
+          driverName: driverStaff.name,
+          vehicleId: vehicleId.trim() || undefined,
+          tripId: tripId,
+          amount: Number(newDriverAdvance),
+          paymentType: newDriverAdvancePaymentType,
+          bankId: newDriverAdvancePaymentType === 'Bank' ? newDriverAdvanceBankId : undefined,
+          purpose: newDriverAdvancePurpose.trim() || `Trip ${tripId} Advance Payout`,
+          status: 'Approved'
+        };
+        await saveDriverAdvanceTransaction(adv);
       }
 
       setIsFormOpen(false);
@@ -2034,13 +2134,31 @@ export default function TripEntry() {
                     </label>
                     <select
                       value={tripDieselPaymentType}
-                      onChange={e => setTripDieselPaymentType(e.target.value as any)}
+                      onChange={e => handleTripDieselPaymentTypeChange(e.target.value as any)}
                       className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
                     >
                       <option value="Credit">Credit / Pay Later (پمپ ادھار کھاتہ)</option>
                       <option value="Cash">Cash (روکڑا ادائیگی)</option>
                       <option value="Bank">Bank Transfer (بینک ادائیگی)</option>
                     </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                      Paid on Spot (ادا شدہ رقم)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="0"
+                      value={tripDieselPaidAmount === '' ? '' : tripDieselPaidAmount}
+                      onChange={e => {
+                        setIsDieselPaidTouched(true);
+                        setTripDieselPaidAmount(e.target.value === '' ? '' : Number(e.target.value));
+                      }}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-emerald-800"
+                    />
                   </div>
 
                   {tripDieselPaymentType === 'Bank' && (
@@ -2060,16 +2178,96 @@ export default function TripEntry() {
                     </div>
                   )}
 
-                  <div className="sm:col-span-2 md:col-span-3 lg:col-span-6 flex justify-between items-center bg-amber-100/50 p-2.5 rounded-lg border border-amber-200">
-                    <span className="text-xs font-bold text-amber-900">
-                      Calculated Diesel Cost:
-                    </span>
-                    <span className="text-sm font-black text-amber-950">
-                      Rs. {tripDieselAmount.toLocaleString()}
-                    </span>
+                  <div className="sm:col-span-2 md:col-span-3 lg:col-span-6 flex flex-wrap justify-between items-center bg-amber-100/60 p-2.5 rounded-lg border border-amber-200 text-xs">
+                    <div className="space-x-4 font-bold text-amber-950">
+                      <span>Total Diesel: <span className="font-black">Rs. {tripDieselAmount.toLocaleString()}</span></span>
+                      <span>Paid on Spot: <span className="font-black text-emerald-800">Rs. {(Number(tripDieselPaidAmount) || 0).toLocaleString()}</span></span>
+                      <span>Remaining Udhaar / Due: <span className="font-black text-rose-800">Rs. {Math.max(0, tripDieselAmount - (Number(tripDieselPaidAmount) || 0)).toLocaleString()}</span></span>
+                    </div>
                   </div>
                 </div>
               </div>
+
+              {/* Driver Advance & Route Settlement Section */}
+              {(() => {
+                const driverStaff = staffList.find(s => s.name.toLowerCase() === driverName.trim().toLowerCase()) 
+                  || (vehicleId ? staffList.find(s => s.id === vehicles.find(v => v.id === vehicleId)?.driverId) : undefined);
+                const advBal = driverStaff ? (balances?.staffBalances[driverStaff.id]?.advanceLoanBalance || 0) : 0;
+
+                return (
+                  <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center space-x-1.5">
+                        <Wallet className="h-4 w-4 text-indigo-600 inline" />
+                        <span>Driver Advance &amp; Route Settlement (ڈرائیور پیشگی کٹوتی و نیا ایڈوانس)</span>
+                      </h4>
+                      {driverStaff ? (
+                        <span className={`text-xs font-black px-2.5 py-1 rounded-md border ${advBal > 0 ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-emerald-100 text-emerald-900 border-emerald-300'}`}>
+                          {driverStaff.name}: Rs. {advBal.toLocaleString()} {advBal > 0 ? '(Advance Due)' : '(Clear)'}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-500 font-medium">
+                          {driverName ? `Driver: ${driverName}` : 'Select a vehicle/driver to link advance'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 bg-white p-3.5 rounded-xl border border-indigo-100">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                          Cut Advance from this Trip (پیشگی کٹوتی)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          placeholder="e.g. 2000"
+                          value={driverAdvanceDeducted === '' ? '' : driverAdvanceDeducted}
+                          onChange={e => setDriverAdvanceDeducted(e.target.value === '' ? '' : Number(e.target.value))}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-indigo-800"
+                        />
+                        <span className="text-[10px] text-slate-500 mt-0.5 block">
+                          Deducts from driver advance balance on trip save
+                        </span>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                          Give New Advance for Trip (نئی پیشگی رقم)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          placeholder="e.g. 5000"
+                          value={newDriverAdvance === '' ? '' : newDriverAdvance}
+                          onChange={e => setNewDriverAdvance(e.target.value === '' ? '' : Number(e.target.value))}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-slate-800"
+                        />
+                        <span className="text-[10px] text-slate-500 mt-0.5 block">
+                          Issues advance payout before trip dispatch
+                        </span>
+                      </div>
+
+                      {typeof newDriverAdvance === 'number' && newDriverAdvance > 0 && (
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
+                            Advance Payment Mode
+                          </label>
+                          <select
+                            value={newDriverAdvancePaymentType}
+                            onChange={e => setNewDriverAdvancePaymentType(e.target.value as any)}
+                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
+                          >
+                            <option value="Cash">Cash (روکڑا کیش)</option>
+                            <option value="Bank">Bank Transfer (بینک)</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Trip Expenses Breakdown (Toll, Food, Mistri, etc.) */}
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
