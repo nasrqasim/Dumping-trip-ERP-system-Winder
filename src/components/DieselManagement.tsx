@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import Pagination from './Pagination';
+import ThermalReceipt from './ThermalReceipt';
 
 export default function DieselManagement() {
   const [dieselLogs, setDieselLogs] = useState<DBDieselTransaction[]>([]);
@@ -261,83 +262,30 @@ export default function DieselManagement() {
     <div className="space-y-6">
       {/* 80mm Print Slip */}
       {activePrintJob && activePrintJob.type === 'thermal' && (
-        <div className="print-only print-receipt p-2 bg-white text-black font-mono">
-          <div className="text-center border-b-2 border-dashed border-black pb-2 mb-2">
-            <div className="flex justify-center mb-1">
-              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain mx-auto" />
-            </div>
-            <h2 className="text-sm font-black uppercase tracking-tight text-black">AL-MADINA CONSTRUCTION COMPANY</h2>
-            <p className="text-[11px] font-bold text-black mt-0.5">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
-            <p className="text-[10px] font-semibold text-black">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WA)</p>
-            <div className="border-t border-dashed border-black my-1.5"></div>
-            <p className="text-xs font-black uppercase tracking-wider text-black">DIESEL FUEL ISSUANCE SLIP</p>
-            <div className="flex justify-between text-xs font-bold text-black mt-1">
-              <span>Slip #: {activePrintJob.data.id}</span>
-              <span>Date: {activePrintJob.data.date}</span>
-            </div>
-          </div>
-
-          <div className="space-y-1 text-xs font-mono text-black border-b border-dashed border-black pb-2 mb-2">
-            <div className="flex justify-between">
-              <span className="font-semibold">Vehicle:</span>
-              <span className="font-bold">{vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.number || activePrintJob.data.vehicleId}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="font-semibold">Driver:</span>
-              <span className="font-bold">{activePrintJob.data.driverName || '—'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="font-semibold">Fuel Station / Pump:</span>
-              <span className="font-bold">{activePrintJob.data.fuelPumpName || vendors.find(v => v.id === activePrintJob.data.vendorId)?.name || 'Pump'}</span>
-            </div>
-            {activePrintJob.data.slipNo && (
-              <div className="flex justify-between">
-                <span className="font-semibold">Pump Slip #:</span>
-                <span className="font-bold">{activePrintJob.data.slipNo}</span>
-              </div>
-            )}
-            {activePrintJob.data.odometerReading && (
-              <div className="flex justify-between">
-                <span className="font-semibold">Odometer / Meter:</span>
-                <span className="font-bold">{activePrintJob.data.odometerReading} km</span>
-              </div>
-            )}
-          </div>
-
-          <div className="py-2 border-b border-dashed border-black text-xs font-mono space-y-1">
-            <div className="flex justify-between font-bold">
-              <span>Quantity (Litres):</span>
-              <span className="text-sm font-black">{activePrintJob.data.litres} L</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Rate / Litre:</span>
-              <span>Rs. {activePrintJob.data.ratePerLitre.toLocaleString()} / L</span>
-            </div>
-          </div>
-
-          <div className="space-y-1 text-xs font-mono text-black pt-2">
-            <div className="flex justify-between text-sm font-black border-b border-dashed border-black pb-1">
-              <span>TOTAL COST:</span>
-              <span>Rs. {activePrintJob.data.totalAmount.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between font-semibold pt-1">
-              <span>Payment Mode:</span>
-              <span className="font-bold">{activePrintJob.data.paymentType}</span>
-            </div>
-            <div className="flex justify-between font-bold">
-              <span>Amount Paid:</span>
-              <span className="font-black text-emerald-800">Rs. {activePrintJob.data.paidAmount.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between font-bold">
-              <span>Payable to Pump:</span>
-              <span className="font-black text-rose-800">Rs. {activePrintJob.data.remainingBalance.toLocaleString()}</span>
-            </div>
-          </div>
-
-          <div className="print-footer text-center mt-4 text-[10px] font-bold font-mono border-t border-dashed border-black pt-2">
-            Software by Roonjha Developers - 03152914836
-          </div>
-        </div>
+        <ThermalReceipt
+          receiptTitle="DIESEL RECEIPT"
+          receiptNo={activePrintJob.data.id}
+          date={activePrintJob.data.date}
+          vehicleNo={vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.number || activePrintJob.data.vehicleId}
+          driverName={activePrintJob.data.driverName || undefined}
+          pumpVendorName={activePrintJob.data.fuelPumpName || vendors.find(v => v.id === activePrintJob.data.vendorId)?.name || 'Fuel Station'}
+          slipNo={activePrintJob.data.slipNo || undefined}
+          paymentType={activePrintJob.data.paymentType}
+          extraFields={activePrintJob.data.odometerReading ? [{ label: 'Odometer Reading:', value: `${activePrintJob.data.odometerReading} km` }] : []}
+          items={[
+            {
+              name: 'Diesel Fuel (High Speed)',
+              qty: activePrintJob.data.litres,
+              unit: 'Litres',
+              rate: activePrintJob.data.ratePerLitre,
+              total: activePrintJob.data.totalAmount,
+            }
+          ]}
+          grossTotal={activePrintJob.data.totalAmount}
+          netTotal={activePrintJob.data.totalAmount}
+          amountReceived={activePrintJob.data.paidAmount}
+          remainingDue={activePrintJob.data.remainingBalance}
+        />
       )}
 
       {/* Main UI */}

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import Pagination from './Pagination';
+import ThermalReceipt, { ThermalReceiptItem } from './ThermalReceipt';
 
 export default function VehicleMaintenance() {
   const [maintenanceRecords, setMaintenanceRecords] = useState<DBVehicleMaintenance[]>([]);
@@ -283,89 +284,71 @@ export default function VehicleMaintenance() {
   return (
     <div className="space-y-6">
       {/* 80mm Print Slip */}
-      {activePrintJob && activePrintJob.type === 'thermal' && (
-        <div className="print-only print-receipt p-2 bg-white text-black font-mono">
-          <div className="text-center border-b-2 border-dashed border-black pb-2 mb-2">
-            <div className="flex justify-center mb-1">
-              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain mx-auto" />
-            </div>
-            <h2 className="text-sm font-black uppercase tracking-tight text-black">AL-MADINA CONSTRUCTION COMPANY</h2>
-            <p className="text-[11px] font-bold text-black mt-0.5">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
-            <p className="text-[10px] font-semibold text-black">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WA)</p>
-            <div className="border-t border-dashed border-black my-1.5"></div>
-            <p className="text-xs font-black uppercase tracking-wider text-black">VEHICLE MAINTENANCE &amp; WORKSHOP SLIP</p>
-            <div className="flex justify-between text-xs font-bold text-black mt-1">
-              <span>Job #: {activePrintJob.data.id}</span>
-              <span>Date: {activePrintJob.data.date}</span>
-            </div>
-          </div>
+      {activePrintJob && activePrintJob.type === 'thermal' && (() => {
+        const job = activePrintJob.data;
+        const receiptItems: ThermalReceiptItem[] = [];
 
-          <div className="space-y-1 text-xs font-mono text-black border-b border-dashed border-black pb-2 mb-2">
-            <div className="flex justify-between">
-              <span className="font-semibold">Vehicle:</span>
-              <span className="font-bold">{vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.number || activePrintJob.data.vehicleId}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="font-semibold">Workshop / Mistri:</span>
-              <span className="font-bold">{activePrintJob.data.workshopName || 'Internal / Workshop'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="font-semibold">Category:</span>
-              <span className="font-bold">{activePrintJob.data.category}</span>
-            </div>
-            {activePrintJob.data.odometer && (
-              <div className="flex justify-between">
-                <span className="font-semibold">Current Odometer:</span>
-                <span className="font-bold">{activePrintJob.data.odometer} km</span>
-              </div>
-            )}
-          </div>
+        if (job.partsCost > 0) {
+          receiptItems.push({
+            name: 'Spare Parts & Materials',
+            subText: job.description || '',
+            qty: 1,
+            unit: 'Job',
+            rate: job.partsCost,
+            total: job.partsCost,
+          });
+        }
+        if (job.labourCost > 0) {
+          receiptItems.push({
+            name: 'Mistri / Labour Charges',
+            qty: 1,
+            unit: 'Job',
+            rate: job.labourCost,
+            total: job.labourCost,
+          });
+        }
+        if (job.otherCost && job.otherCost > 0) {
+          receiptItems.push({
+            name: 'Other / Lathe / Fabrication',
+            qty: 1,
+            unit: 'Job',
+            rate: job.otherCost,
+            total: job.otherCost,
+          });
+        }
+        if (receiptItems.length === 0) {
+          receiptItems.push({
+            name: `Maintenance - ${job.category}`,
+            subText: job.description || '',
+            qty: 1,
+            unit: 'Job',
+            rate: job.totalCost,
+            total: job.totalCost,
+          });
+        }
 
-          <div className="py-2 border-b border-dashed border-black text-xs font-mono space-y-1">
-            <div className="font-bold">Work Particulars / Repairs Done:</div>
-            <p className="text-slate-800">{activePrintJob.data.description}</p>
-            <div className="pt-1 space-y-0.5 border-t border-dotted border-black">
-              <div className="flex justify-between">
-                <span>Spare Parts Cost:</span>
-                <span>Rs. {activePrintJob.data.partsCost.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Mistri / Labour Charges:</span>
-                <span>Rs. {activePrintJob.data.labourCost.toLocaleString()}</span>
-              </div>
-              {activePrintJob.data.otherCost ? (
-                <div className="flex justify-between">
-                  <span>Other / Lathe Machine:</span>
-                  <span>Rs. {activePrintJob.data.otherCost.toLocaleString()}</span>
-                </div>
-              ) : null}
-            </div>
-          </div>
+        const extraFields = [
+          { label: 'Workshop / Mistri:', value: job.workshopName || 'Internal / Workshop' },
+          { label: 'Category:', value: job.category },
+          ...(job.odometer ? [{ label: 'Current Odometer:', value: `${job.odometer} km` }] : [])
+        ];
 
-          <div className="space-y-1 text-xs font-mono text-black pt-2">
-            <div className="flex justify-between text-sm font-black border-b border-dashed border-black pb-1">
-              <span>TOTAL MAINTENANCE:</span>
-              <span>Rs. {activePrintJob.data.totalCost.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between font-semibold pt-1">
-              <span>Payment Mode:</span>
-              <span className="font-bold">{activePrintJob.data.paymentType}</span>
-            </div>
-            <div className="flex justify-between font-bold">
-              <span>Paid:</span>
-              <span className="font-black text-emerald-800">Rs. {activePrintJob.data.paidAmount.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between font-bold">
-              <span>Payable to Workshop:</span>
-              <span className="font-black text-rose-800">Rs. {activePrintJob.data.remainingBalance.toLocaleString()}</span>
-            </div>
-          </div>
-
-          <div className="print-footer text-center mt-4 text-[10px] font-bold font-mono border-t border-dashed border-black pt-2">
-            Software by Roonjha Developers - 03152914836
-          </div>
-        </div>
-      )}
+        return (
+          <ThermalReceipt
+            receiptTitle="MAINTENANCE RECEIPT"
+            receiptNo={job.id}
+            date={job.date}
+            vehicleNo={vehicles.find(v => v.id === job.vehicleId)?.number || job.vehicleId}
+            paymentType={job.paymentType}
+            extraFields={extraFields}
+            items={receiptItems}
+            grossTotal={job.totalCost}
+            netTotal={job.totalCost}
+            amountReceived={job.paidAmount}
+            remainingDue={job.remainingBalance}
+          />
+        );
+      })()}
 
       {/* Main UI */}
       <div className={`space-y-6 ${activePrintJob ? 'no-print' : ''}`}>

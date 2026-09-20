@@ -4,6 +4,7 @@ import { calculateLiveBalances, LiveBalances, saveSaleTransaction, saveDieselTra
 import { ShoppingCart, User, Plus, Search, Trash, Printer, History, Fuel, Truck, CheckCircle } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import Pagination from './Pagination';
+import ThermalReceipt from './ThermalReceipt';
 
 interface POSCounterProps {
   preselectedCustomerId?: string;
@@ -283,112 +284,30 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
     <div className="space-y-6">
       {/* Print Job Engine (Only visible during window.print) */}
       {activePrintJob && activePrintJob.type === 'thermal' && (
-        <div className="print-only print-receipt p-2 bg-white text-black font-mono">
-          <div className="text-center border-b-2 border-dashed border-black pb-2 mb-2">
-            <div className="flex justify-center mb-1">
-              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain mx-auto" />
-            </div>
-            <h2 className="text-sm font-black uppercase tracking-tight text-black">AL-MADINA CONSTRUCTION COMPANY</h2>
-            <p className="text-[11px] font-bold text-black mt-0.5">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
-            <p className="text-[10px] font-semibold text-black">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WA)</p>
-            <div className="border-t border-dashed border-black my-1.5"></div>
-            <p className="text-xs font-black uppercase tracking-wider text-black">POS SALES INVOICE</p>
-            <div className="flex justify-between text-xs font-bold text-black mt-1">
-              <span>Invoice #: {activePrintJob.data.id}</span>
-              <span>Date: {activePrintJob.data.date}</span>
-            </div>
-          </div>
-
-          <div className="space-y-1 text-xs font-mono text-black border-b border-dashed border-black pb-2 mb-2">
-            <div className="flex justify-between">
-              <span className="font-semibold">Customer:</span>
-              <span className="font-bold">{customers.find(c => c.id === activePrintJob.data.customerId)?.name || (activePrintJob.data.customerId === 'walk-in' ? 'Walk-in Customer' : activePrintJob.data.customerId)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="font-semibold">Payment Mode:</span>
-              <span className="font-bold">{activePrintJob.data.paymentType}</span>
-            </div>
-          </div>
-            
-          <table className="w-full text-left border-collapse my-2 font-mono text-xs text-black">
-            <thead>
-              <tr className="border-b-2 border-dashed border-black font-bold uppercase">
-                <th className="py-1 text-left">Item Description</th>
-                <th className="py-1 text-right whitespace-nowrap">Qty</th>
-                <th className="py-1 text-center whitespace-nowrap">Unit</th>
-                <th className="py-1 text-right whitespace-nowrap">Rate</th>
-                <th className="py-1 text-right whitespace-nowrap">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-dashed divide-slate-300">
-              <tr>
-                <td className="py-1 font-bold max-w-[85px] break-words">
-                  {items.find(i => i.id === activePrintJob.data.itemId)?.name || activePrintJob.data.itemId}
-                </td>
-                <td className="py-1 text-right font-bold whitespace-nowrap">{activePrintJob.data.quantity}</td>
-                <td className="py-1 text-center font-semibold whitespace-nowrap">
-                  {items.find(i => i.id === activePrintJob.data.itemId)?.unit || '—'}
-                </td>
-                <td className="py-1 text-right font-semibold whitespace-nowrap">Rs. {activePrintJob.data.rate.toLocaleString()}</td>
-                <td className="py-1 text-right font-black whitespace-nowrap">
-                  Rs. {(activePrintJob.data.quantity * activePrintJob.data.rate).toLocaleString()}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-
-          <div className="space-y-1 text-xs font-mono text-black">
-            <div className="flex justify-between font-semibold">
-              <span>Subtotal:</span>
-              <span>Rs. {(activePrintJob.data.quantity * activePrintJob.data.rate).toLocaleString()}</span>
-            </div>
-            {activePrintJob.data.discount > 0 && (
-              <div className="flex justify-between font-bold">
-                <span>Discount Allowed:</span>
-                <span>-Rs. {(activePrintJob.data.discount || 0).toLocaleString()}</span>
-              </div>
-            )}
-            <div className="flex justify-between font-black text-sm border-t-2 border-b-2 border-double border-black py-1 my-1">
-              <span>NET TOTAL:</span>
-              <span>Rs. {activePrintJob.data.total.toLocaleString()}</span>
-            </div>
-
-            {(() => {
-              const p = activePrintJob.data.paidAmount !== undefined 
-                ? activePrintJob.data.paidAmount 
-                : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.total : 0);
-              const diff = activePrintJob.data.total - p;
-              return (
-                <>
-                  <div className="flex justify-between font-semibold pt-1">
-                    <span>Paid Amount:</span>
-                    <span className="font-black">Rs. {p.toLocaleString()}</span>
-                  </div>
-                  {diff > 0 ? (
-                    <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
-                      <span>Remaining Outstanding:</span>
-                      <span>Rs. {diff.toLocaleString()}</span>
-                    </div>
-                  ) : diff < 0 ? (
-                    <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
-                      <span>Advance Credited:</span>
-                      <span>+Rs. {(-diff).toLocaleString()}</span>
-                    </div>
-                  ) : (
-                    <div className="flex justify-between font-bold pt-0.5">
-                      <span>Payment Status:</span>
-                      <span>✓ Fully Paid (Clear)</span>
-                    </div>
-                  )}
-                </>
-              );
-            })()}
-          </div>
-
-          <div className="print-footer text-center mt-4 text-[10px] font-bold font-mono">
-            Software by Roonjha Developers - 03152914836
-          </div>
-        </div>
+        <ThermalReceipt
+          receiptTitle="SALE RECEIPT"
+          receiptNo={activePrintJob.data.id}
+          date={activePrintJob.data.date}
+          customerName={customers.find(c => c.id === activePrintJob.data.customerId)?.name || (activePrintJob.data.customerId === 'walk-in' ? 'Walk-in Customer' : activePrintJob.data.customerId)}
+          paymentType={activePrintJob.data.paymentType}
+          items={[
+            {
+              name: items.find(i => i.id === activePrintJob.data.itemId)?.name || activePrintJob.data.itemId,
+              qty: activePrintJob.data.quantity,
+              unit: items.find(i => i.id === activePrintJob.data.itemId)?.unit || 'Unit',
+              rate: activePrintJob.data.rate,
+              total: activePrintJob.data.quantity * activePrintJob.data.rate,
+            }
+          ]}
+          grossTotal={activePrintJob.data.quantity * activePrintJob.data.rate}
+          discount={activePrintJob.data.discount || 0}
+          netTotal={activePrintJob.data.total}
+          amountReceived={
+            activePrintJob.data.paidAmount !== undefined 
+              ? activePrintJob.data.paidAmount 
+              : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.total : 0)
+          }
+        />
       )}
 
       {activePrintJob && activePrintJob.type === 'a4' && (

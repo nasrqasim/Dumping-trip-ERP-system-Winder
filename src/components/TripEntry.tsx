@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import Pagination from './Pagination';
+import ThermalReceipt, { ThermalReceiptItem } from './ThermalReceipt';
 
 interface FormTripItem {
   id: string;
@@ -927,230 +928,102 @@ export default function TripEntry() {
   return (
     <div className="space-y-6">
       {/* Thermal (80mm) Print Receipt Layout */}
-      {activePrintJob && activePrintJob.type === 'thermal' && (
-        <div className="print-only print-receipt p-2 bg-white text-black font-mono">
-          <div className="text-center border-b-2 border-dashed border-black pb-2 mb-2">
-            <div className="flex justify-center mb-1">
-              <img src="/logo.jpeg" alt="Logo" className="h-14 w-auto object-contain mx-auto" />
-            </div>
-            <h2 className="text-sm font-black uppercase tracking-tight text-black">AL-MADINA CONSTRUCTION COMPANY</h2>
-            <p className="text-[11px] font-bold text-black mt-0.5">Proprietor: Haji Gul &amp; Son's (03458829298)</p>
-            <p className="text-[10px] font-semibold text-black">Haji Ahmad Khan: 03453322228 | Hafeez Khan: 03109777753 (WA)</p>
-            <div className="border-t border-dashed border-black my-1.5"></div>
-            <p className="text-xs font-black uppercase tracking-wider text-black">
-              {activePrintJob.data.billingType === 'hourly' ? 'VEHICLE HOURLY RENTAL SLIP (فی گھنٹہ کرایہ)' : 'MATERIAL DISPATCH & TRANSPORT SLIP'}
-            </p>
-            <div className="flex justify-between text-xs font-bold text-black mt-1">
-              <span>Slip #: {activePrintJob.data.id}</span>
-              <span>Date: {activePrintJob.data.date}</span>
-            </div>
-          </div>
+      {activePrintJob && activePrintJob.type === 'thermal' && (() => {
+        const trip = activePrintJob.data;
+        const receiptItems: ThermalReceiptItem[] = [];
 
-          <div className="space-y-1 text-xs font-mono text-black border-b border-dashed border-black pb-2 mb-2">
-            <div className="flex justify-between">
-              <span className="font-semibold">Vehicle No:</span>
-              <span className="font-bold">
-                {vehicles.find(v => v.id === activePrintJob.data.vehicleId)?.number || (activePrintJob.data.vehicleId ? activePrintJob.data.vehicleId : 'Direct / Machine')}
-                {activePrintJob.data.vehicleModel ? ` (${activePrintJob.data.vehicleModel})` : ''}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="font-semibold">Driver:</span>
-              <span className="font-bold">{activePrintJob.data.driverName || '—'} {activePrintJob.data.driverPhone ? `• ${activePrintJob.data.driverPhone}` : ''}</span>
-            </div>
-            {activePrintJob.data.driverCnic && (
-              <div className="flex justify-between text-[11px]">
-                <span>Driver CNIC:</span>
-                <span className="font-bold">{activePrintJob.data.driverCnic}</span>
-              </div>
-            )}
-            <div className="flex justify-between">
-              <span className="font-semibold">Customer:</span>
-              <span className="font-bold">{customers.find(c => c.id === activePrintJob.data.customerId)?.name || (activePrintJob.data.customerId === 'walk-in' ? 'Walk-in Customer' : activePrintJob.data.customerId)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="font-semibold">Route / Site:</span>
-              <span className="font-bold">{activePrintJob.data.from || 'Base'} ➔ {activePrintJob.data.to || 'Site'}</span>
-            </div>
-          </div>
+        if (trip.billingType === 'hourly') {
+          receiptItems.push({
+            name: `Hourly Vehicle Rental`,
+            subText: `${trip.startTime || '—'} ➔ ${trip.endTime || '—'}`,
+            qty: trip.totalHours || 1,
+            unit: 'Hrs',
+            rate: trip.hourlyRate || 0,
+            total: trip.vehicleCharges || 0,
+          });
+        }
 
-          {/* Hourly Rental Breakdown if applicable */}
-          {activePrintJob.data.billingType === 'hourly' && (
-            <div className="my-2 border-b border-dashed border-black pb-2 font-mono text-xs text-black space-y-1 bg-slate-50 p-1.5 rounded">
-              <div className="font-bold uppercase text-[11px] border-b border-dashed border-black pb-0.5">Rental Duration &amp; Meter Readings</div>
-              <div className="flex justify-between">
-                <span>Start Time (روانگی):</span>
-                <span className="font-bold">{activePrintJob.data.startTime || '—'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Return Time (واپسی):</span>
-                <span className="font-bold">{activePrintJob.data.endTime || '—'}</span>
-              </div>
-              <div className="flex justify-between font-bold border-t border-dotted border-black pt-0.5">
-                <span>Total Hours (کل گھنٹے):</span>
-                <span className="font-black text-sm">{activePrintJob.data.totalHours || 0} Hours</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Hourly Rate (فی گھنٹہ ریٹ):</span>
-                <span className="font-bold">Rs. {(activePrintJob.data.hourlyRate || 0).toLocaleString()} / Hr</span>
-              </div>
-              {(activePrintJob.data.odometerStart !== undefined || activePrintJob.data.odometerEnd !== undefined) && (
-                <div className="flex justify-between text-[11px] pt-0.5 border-t border-dotted border-slate-300">
-                  <span>Odometer:</span>
-                  <span>{activePrintJob.data.odometerStart ?? '—'} km ➔ {activePrintJob.data.odometerEnd ?? '—'} km</span>
-                </div>
-              )}
-            </div>
-          )}
+        if (trip.items && trip.items.length > 0) {
+          trip.items.forEach(it => {
+            if (it.quantity > 0 || it.amount > 0) {
+              receiptItems.push({
+                name: it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId,
+                qty: it.quantity,
+                unit: it.unit || 'Ton',
+                rate: it.rate,
+                total: it.amount,
+              });
+            }
+          });
+        }
 
-          {/* Dispatched Materials Table (if any) */}
-          {activePrintJob.data.items && activePrintJob.data.items.length > 0 && activePrintJob.data.items.some(i => i.quantity > 0) && (
-            <table className="w-full text-left border-collapse my-2 font-mono text-xs text-black">
-              <thead>
-                <tr className="border-b-2 border-dashed border-black font-bold uppercase">
-                  <th className="py-1 text-left">Item</th>
-                  <th className="py-1 text-right whitespace-nowrap">Qty</th>
-                  <th className="py-1 text-center whitespace-nowrap">Unit</th>
-                  <th className="py-1 text-right whitespace-nowrap">Rate</th>
-                  <th className="py-1 text-right whitespace-nowrap">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-dashed divide-slate-300">
-                {activePrintJob.data.items.map((it, idx) => (
-                  <tr key={idx}>
-                    <td className="py-1 font-bold max-w-[85px] break-words">
-                      {it.itemName || items.find(i => i.id === it.itemId)?.name || it.itemId}
-                    </td>
-                    <td className="py-1 text-right font-bold whitespace-nowrap">{it.quantity}</td>
-                    <td className="py-1 text-center font-semibold whitespace-nowrap">{it.unit}</td>
-                    <td className="py-1 text-right font-semibold whitespace-nowrap">Rs. {it.rate.toLocaleString()}</td>
-                    <td className="py-1 text-right font-black whitespace-nowrap">Rs. {it.amount.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-dashed border-black font-bold">
-                  <td colSpan={3} className="py-1 text-left">
-                    Total Items: {activePrintJob.data.items.length}
-                  </td>
-                  <td className="py-1 text-right font-bold">Mat Total:</td>
-                  <td className="py-1 text-right font-black">Rs. {activePrintJob.data.materialTotal.toLocaleString()}</td>
-                </tr>
-              </tfoot>
-            </table>
-          )}
+        if (trip.billingType !== 'hourly' && trip.vehicleCharges > 0) {
+          receiptItems.push({
+            name: 'Vehicle Freight / Transport',
+            subText: `${trip.from || 'Base'} ➔ ${trip.to || 'Site'}`,
+            qty: 1,
+            unit: 'Trip',
+            rate: trip.vehicleCharges,
+            total: trip.vehicleCharges,
+          });
+        }
 
-          {/* Itemized Trip Expenses Breakdown */}
-          {activePrintJob.data.expenses && activePrintJob.data.expenses.length > 0 && (
-            <div className="my-2 border-t border-b border-dashed border-black py-1.5 font-mono text-black">
-              <div className="flex justify-between items-center font-black text-xs uppercase mb-1">
-                <span>Trip Expenses &amp; Toll:</span>
-                <span>Rs. {activePrintJob.data.totalExpenses.toLocaleString()}</span>
-              </div>
-              <table className="w-full text-left border-collapse text-[11px]">
-                <thead>
-                  <tr className="border-b border-dashed border-slate-300 font-bold uppercase">
-                    <th className="py-0.5 text-left">Expense Particulars</th>
-                    <th className="py-0.5 text-right whitespace-nowrap">Amount</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-dotted divide-slate-300">
-                  {activePrintJob.data.expenses.map((exp, idx) => (
-                    <tr key={idx}>
-                      <td className="py-0.5 font-semibold">
-                        {exp.category} {exp.description ? `(${exp.description})` : ''}
-                      </td>
-                      <td className="py-0.5 text-right font-bold whitespace-nowrap">
-                        Rs. {Number(exp.amount || 0).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        if (trip.expenses && trip.expenses.length > 0) {
+          trip.expenses.forEach(exp => {
+            receiptItems.push({
+              name: `Expense: ${exp.category}`,
+              subText: exp.description || '',
+              qty: 1,
+              rate: Number(exp.amount || 0),
+              total: Number(exp.amount || 0),
+            });
+          });
+        }
 
-          {/* Financial Summary */}
-          <div className="space-y-1 text-xs font-mono text-black">
-            {activePrintJob.data.materialTotal > 0 && (
-              <div className="flex justify-between font-semibold">
-                <span>Material Total:</span>
-                <span className="font-bold">Rs. {activePrintJob.data.materialTotal.toLocaleString()}</span>
-              </div>
-            )}
-            {activePrintJob.data.vehicleCharges > 0 && (
-              <div className="flex justify-between font-semibold">
-                <span>{activePrintJob.data.billingType === 'hourly' ? 'Vehicle Rental Charges:' : 'Vehicle Freight Charges:'}</span>
-                <span className="font-bold">+Rs. {activePrintJob.data.vehicleCharges.toLocaleString()}</span>
-              </div>
-            )}
-            {activePrintJob.data.totalExpenses > 0 && (
-              <div className="flex justify-between font-semibold">
-                <span>Trip Expenses Billed:</span>
-                <span className="font-bold">+Rs. {activePrintJob.data.totalExpenses.toLocaleString()}</span>
-              </div>
-            )}
-            
-            <div className="border-t border-dashed border-black my-1"></div>
+        // Fallback item if list is empty
+        if (receiptItems.length === 0) {
+          receiptItems.push({
+            name: 'Trip Service / Cargo Transport',
+            qty: 1,
+            unit: 'Trip',
+            rate: trip.grandTotal,
+            total: trip.grandTotal,
+          });
+        }
 
-            <div className="flex justify-between font-bold">
-              <span>Gross Total:</span>
-              <span>Rs. {(activePrintJob.data.materialTotal + activePrintJob.data.vehicleCharges + activePrintJob.data.totalExpenses).toLocaleString()}</span>
-            </div>
-            {activePrintJob.data.discount > 0 && (
-              <div className="flex justify-between font-bold">
-                <span>Discount Allowed:</span>
-                <span>-Rs. {(activePrintJob.data.discount || 0).toLocaleString()}</span>
-              </div>
-            )}
-            <div className="flex justify-between font-black text-sm border-t-2 border-b-2 border-double border-black py-1 my-1">
-              <span>NET GRAND TOTAL:</span>
-              <span>Rs. {activePrintJob.data.grandTotal.toLocaleString()}</span>
-            </div>
-            
-            <div className="flex justify-between pt-1 font-semibold">
-              <span>Payment Mode:</span>
-              <span className="font-bold">{activePrintJob.data.paymentType}</span>
-            </div>
-            <div className="flex justify-between font-semibold">
-              <span>Paid Amount:</span>
-              <span className="font-black">
-                Rs. {(activePrintJob.data.paidAmount !== undefined ? activePrintJob.data.paidAmount : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.grandTotal : 0)).toLocaleString()}
-              </span>
-            </div>
-            {(() => {
-              const p = activePrintJob.data.paidAmount !== undefined ? activePrintJob.data.paidAmount : (activePrintJob.data.paymentType === 'Cash' || activePrintJob.data.paymentType === 'Bank' ? activePrintJob.data.grandTotal : 0);
-              const diff = activePrintJob.data.grandTotal - p;
-              if (diff > 0) {
-                return (
-                  <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
-                    <span>Remaining Due (Credit):</span>
-                    <span>Rs. {diff.toLocaleString()}</span>
-                  </div>
-                );
-              } else if (diff < 0) {
-                return (
-                  <div className="flex justify-between font-bold border border-black p-1 rounded mt-1 bg-slate-50">
-                    <span>Overpayment (Advance):</span>
-                    <span>+Rs. {(-diff).toLocaleString()}</span>
-                  </div>
-                );
-              } else {
-                return (
-                  <div className="flex justify-between font-bold pt-0.5 text-emerald-800">
-                    <span>Payment Status:</span>
-                    <span>✓ Fully Paid (Clear)</span>
-                  </div>
-                );
-              }
-            })()}
-          </div>
-          
-          <div className="print-footer text-center mt-4 text-[10px] font-bold font-mono border-t border-dashed border-black pt-2">
-            Software by Roonjha Developers - 03152914836
-          </div>
-        </div>
-      )}
+        const extraFields: { label: string; value: string }[] = [];
+        if (trip.from || trip.to) {
+          extraFields.push({ label: 'Route / Site:', value: `${trip.from || 'Base'} ➔ ${trip.to || 'Site'}` });
+        }
+        if (trip.billingType === 'hourly') {
+          extraFields.push({ label: 'Rental Timing:', value: `${trip.startTime || '—'} to ${trip.endTime || '—'}` });
+          if (trip.odometerStart !== undefined || trip.odometerEnd !== undefined) {
+            extraFields.push({ label: 'Odometer:', value: `${trip.odometerStart ?? '—'} to ${trip.odometerEnd ?? '—'} km` });
+          }
+        }
+
+        const paid = trip.paidAmount !== undefined 
+          ? trip.paidAmount 
+          : (trip.paymentType === 'Cash' || trip.paymentType === 'Bank' ? trip.grandTotal : 0);
+
+        return (
+          <ThermalReceipt
+            receiptTitle={trip.billingType === 'hourly' ? 'HOURLY RENTAL RECEIPT' : 'TRIP RECEIPT'}
+            receiptNo={trip.id}
+            date={trip.date}
+            customerName={customers.find(c => c.id === trip.customerId)?.name || (trip.customerId === 'walk-in' ? 'Walk-in Customer' : trip.customerId)}
+            vehicleNo={vehicles.find(v => v.id === trip.vehicleId)?.number || (trip.vehicleId ? trip.vehicleId : undefined)}
+            driverName={trip.driverName ? `${trip.driverName}${trip.driverPhone ? ` (${trip.driverPhone})` : ''}` : undefined}
+            paymentType={trip.paymentType}
+            extraFields={extraFields}
+            items={receiptItems}
+            grossTotal={(trip.materialTotal || 0) + (trip.vehicleCharges || 0) + (trip.totalExpenses || 0)}
+            discount={trip.discount || 0}
+            netTotal={trip.grandTotal}
+            amountReceived={paid}
+          />
+        );
+      })()}
 
       {/* A4 Invoice Print Layout */}
       {activePrintJob && activePrintJob.type === 'a4' && (
