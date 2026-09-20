@@ -1206,15 +1206,20 @@ export default function StaffManagement() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Category / Role *</label>
-                  <select
+                  <input
+                    type="text"
+                    required
+                    list="staff-categories-list"
+                    placeholder="e.g. Driver, Caleender, Labour, Mechanic, Munshi..."
                     value={category}
                     onChange={e => setCategory(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-semibold"
-                  >
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 bg-white"
+                  />
+                  <datalist id="staff-categories-list">
                     {defaultCategories.map(c => (
-                      <option key={c} value={c}>{c}</option>
+                      <option key={c} value={c} />
                     ))}
-                  </select>
+                  </datalist>
                 </div>
               </div>
 
