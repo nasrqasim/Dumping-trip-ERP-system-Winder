@@ -425,9 +425,10 @@ export interface DBStaffPayment {
   id: string;
   date: string;
   staffId: string;
-  type: 'salary' | 'advance' | 'loan' | 'settlement';
+  type: 'salary' | 'advance' | 'loan' | 'settlement' | 'advance_repayment' | 'loan_repayment';
   amount: number;
   advanceAdjusted?: number;
+  loanAdjusted?: number;
   netPaid: number;
   paymentType: 'Cash' | 'Bank';
   bankId?: string;

@@ -50,7 +50,8 @@ import {
   Upload,
   Camera,
   Eye,
-  Download
+  Download,
+  Building2
 } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import Pagination from './Pagination';
@@ -104,11 +105,15 @@ export default function StaffManagement() {
   const [address, setAddress] = useState('');
   const [emergencyContact, setEmergencyContact] = useState('');
 
+  // Filter States
+  const [plantFilter, setPlantFilter] = useState<'all' | 'plant1' | 'plant2'>('all');
+
   // Payment Form fields
   const [payStaffId, setPayStaffId] = useState('');
-  const [payType, setPayType] = useState<'salary' | 'advance' | 'loan' | 'settlement'>('salary');
-  const [payAmount, setPayAmount] = useState(0); // Gross salary or Advance amount
+  const [payType, setPayType] = useState<'salary' | 'advance' | 'loan' | 'settlement' | 'advance_repayment' | 'loan_repayment'>('salary');
+  const [payAmount, setPayAmount] = useState(0); // Gross salary, Advance/Loan amount, or Repayment amount
   const [payAdvanceAdjusted, setPayAdvanceAdjusted] = useState(0);
+  const [payLoanAdjusted, setPayLoanAdjusted] = useState(0);
   const [payMethod, setPayMethod] = useState<'Cash' | 'Bank'>('Cash');
   const [payBankId, setPayBankId] = useState('');
   const [payDate, setPayDate] = useState(new Date().toISOString().split('T')[0]);
@@ -138,6 +143,8 @@ export default function StaffManagement() {
   const [editingAdvId, setEditingAdvId] = useState<string | null>(null);
 
   const defaultCategories = [
+    'Plant 1',
+    'Plant 2',
     'Driver',
     'Caleender / Cleaner (کلینڈر)',
     'Labour (مزدور)',
@@ -353,25 +360,51 @@ export default function StaffManagement() {
     }
   };
 
-  const handleOpenPaymentForm = (pmt?: DBStaffPayment) => {
+  const handleOpenPaymentForm = (
+    pmt?: DBStaffPayment,
+    initialType?: 'salary' | 'advance' | 'loan' | 'settlement' | 'advance_repayment' | 'loan_repayment',
+    initialStaffId?: string
+  ) => {
     if (pmt) {
       setEditingPaymentId(pmt.id);
       setPayStaffId(pmt.staffId);
       setPayType(pmt.type);
       setPayAmount(pmt.amount);
       setPayAdvanceAdjusted(pmt.advanceAdjusted || 0);
+      setPayLoanAdjusted(pmt.loanAdjusted || 0);
       setPayMethod(pmt.paymentType);
       setPayBankId(pmt.bankId || (banks.length > 0 ? banks[0].id : ''));
       setPayDate(pmt.date);
       setPayDesc(pmt.description);
     } else {
       setEditingPaymentId(null);
-      setPayType('salary');
-      const targetId = activeLedgerStaffId !== 'all' ? activeLedgerStaffId : (staff.length > 0 ? staff[0].id : '');
+      const chosenType = initialType || 'salary';
+      setPayType(chosenType);
+      const targetId = initialStaffId || (activeLedgerStaffId !== 'all' ? activeLedgerStaffId : (staff.length > 0 ? staff[0].id : ''));
       setPayStaffId(targetId);
       const foundStaff = staff.find(s => s.id === targetId);
-      setPayAmount(foundStaff ? foundStaff.basicSalary : 0);
-      setPayAdvanceAdjusted(0);
+      const bal = balances?.staffBalances[targetId];
+
+      if (chosenType === 'salary') {
+        setPayAmount(foundStaff ? foundStaff.basicSalary : 0);
+        setPayAdvanceAdjusted(0);
+        setPayLoanAdjusted(0);
+      } else if (chosenType === 'advance_repayment') {
+        const curAdv = bal?.advanceBalance !== undefined ? bal.advanceBalance : (bal?.advanceLoanBalance || 0);
+        setPayAmount(curAdv > 0 ? curAdv : 0);
+        setPayAdvanceAdjusted(0);
+        setPayLoanAdjusted(0);
+      } else if (chosenType === 'loan_repayment') {
+        const curLoan = bal?.loanBalance || 0;
+        setPayAmount(curLoan > 0 ? curLoan : 0);
+        setPayAdvanceAdjusted(0);
+        setPayLoanAdjusted(0);
+      } else {
+        setPayAmount(0);
+        setPayAdvanceAdjusted(0);
+        setPayLoanAdjusted(0);
+      }
+
       setPayMethod('Cash');
       setPayDate(new Date().toISOString().split('T')[0]);
       setPayDesc('');
@@ -406,7 +439,7 @@ export default function StaffManagement() {
     }
 
     const netPayout = (payType === 'salary' || payType === 'settlement')
-      ? Math.max(0, payAmount - payAdvanceAdjusted)
+      ? Math.max(0, payAmount - (payAdvanceAdjusted || 0) - (payLoanAdjusted || 0))
       : payAmount;
 
     const payment: DBStaffPayment = {
@@ -415,11 +448,12 @@ export default function StaffManagement() {
       staffId: payStaffId,
       type: payType,
       amount: Number(payAmount),
-      advanceAdjusted: (payType === 'salary' || payType === 'settlement') ? Number(payAdvanceAdjusted) : 0,
+      advanceAdjusted: (payType === 'salary' || payType === 'settlement') ? Number(payAdvanceAdjusted || 0) : 0,
+      loanAdjusted: (payType === 'salary' || payType === 'settlement') ? Number(payLoanAdjusted || 0) : 0,
       netPaid: Number(netPayout),
       paymentType: payMethod,
       bankId: payMethod === 'Bank' ? payBankId : undefined,
-      description: payDesc.trim() || `${payType.toUpperCase()} payout for ${payStaffId}`
+      description: payDesc.trim() || `${payType.replace('_', ' ').toUpperCase()} for ${payStaffId}`
     };
 
     try {
@@ -579,6 +613,20 @@ export default function StaffManagement() {
   // Filters
   const cleanSearch = searchQuery.toLowerCase().trim();
   const filteredStaff = staff.filter(s => {
+    if (plantFilter === 'plant1') {
+      const isP1 = (s.category && s.category.toLowerCase().includes('plant 1')) ||
+                   (s.designation && s.designation.toLowerCase().includes('plant 1')) ||
+                   (s.address && s.address.toLowerCase().includes('plant 1')) ||
+                   (s.notes && s.notes.toLowerCase().includes('plant 1'));
+      if (!isP1) return false;
+    }
+    if (plantFilter === 'plant2') {
+      const isP2 = (s.category && s.category.toLowerCase().includes('plant 2')) ||
+                   (s.designation && s.designation.toLowerCase().includes('plant 2')) ||
+                   (s.address && s.address.toLowerCase().includes('plant 2')) ||
+                   (s.notes && s.notes.toLowerCase().includes('plant 2'));
+      if (!isP2) return false;
+    }
     if (!cleanSearch) return true;
     return (
       s.name.toLowerCase().includes(cleanSearch) ||
@@ -591,8 +639,24 @@ export default function StaffManagement() {
   });
 
   const filteredPayments = payments.filter(p => {
-    if (!cleanSearch) return true;
     const stMember = staff.find(s => s.id === p.staffId);
+    if (plantFilter === 'plant1') {
+      const isP1 = stMember && (
+        (stMember.category && stMember.category.toLowerCase().includes('plant 1')) ||
+        (stMember.designation && stMember.designation.toLowerCase().includes('plant 1')) ||
+        (stMember.address && stMember.address.toLowerCase().includes('plant 1'))
+      );
+      if (!isP1) return false;
+    }
+    if (plantFilter === 'plant2') {
+      const isP2 = stMember && (
+        (stMember.category && stMember.category.toLowerCase().includes('plant 2')) ||
+        (stMember.designation && stMember.designation.toLowerCase().includes('plant 2')) ||
+        (stMember.address && stMember.address.toLowerCase().includes('plant 2'))
+      );
+      if (!isP2) return false;
+    }
+    if (!cleanSearch) return true;
     return (
       p.id.toLowerCase().includes(cleanSearch) ||
       p.date.includes(cleanSearch) ||
@@ -619,13 +683,27 @@ export default function StaffManagement() {
 
     let runningBal = 0;
     return sortedAsc.map(p => {
-      const advanceGiven = (p.type === 'advance' || p.type === 'loan') ? p.amount : 0;
+      const advanceGiven = p.type === 'advance' ? p.amount : 0;
+      const loanGiven = p.type === 'loan' ? p.amount : 0;
+      const totalGiven = advanceGiven + loanGiven;
+
       const advanceDeducted = (p.type === 'salary' || p.type === 'settlement') ? (p.advanceAdjusted || 0) : 0;
-      runningBal += (advanceGiven - advanceDeducted);
+      const loanDeducted = (p.type === 'salary' || p.type === 'settlement') ? (p.loanAdjusted || 0) : 0;
+      const advanceCashRepaid = p.type === 'advance_repayment' ? p.amount : 0;
+      const loanCashRepaid = p.type === 'loan_repayment' ? p.amount : 0;
+      const totalRepaid = advanceDeducted + loanDeducted + advanceCashRepaid + loanCashRepaid;
+
+      runningBal += (totalGiven - totalRepaid);
       return {
         ...p,
         advanceGiven,
+        loanGiven,
         advanceDeducted,
+        loanDeducted,
+        advanceCashRepaid,
+        loanCashRepaid,
+        totalGiven,
+        totalRepaid,
         runningBal
       };
     });
@@ -703,12 +781,51 @@ export default function StaffManagement() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {/* Plant 1 & Plant 2 Filters */}
+          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => { setPlantFilter('all'); setCurrentPage(1); }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                plantFilter === 'all'
+                  ? 'bg-white text-indigo-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              All Plants ({staff.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => { setPlantFilter('plant1'); setCurrentPage(1); }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                plantFilter === 'plant1'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Building2 className="h-3.5 w-3.5" />
+              <span>Plant 1 ({staff.filter(s => (s.category && s.category.toLowerCase().includes('plant 1')) || (s.designation && s.designation.toLowerCase().includes('plant 1'))).length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setPlantFilter('plant2'); setCurrentPage(1); }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                plantFilter === 'plant2'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Building2 className="h-3.5 w-3.5" />
+              <span>Plant 2 ({staff.filter(s => (s.category && s.category.toLowerCase().includes('plant 2')) || (s.designation && s.designation.toLowerCase().includes('plant 2'))).length})</span>
+            </button>
+          </div>
+
           <div className="relative min-w-[220px]">
             <input
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search staff, CNIC, phone..."
+              placeholder="Search staff, CNIC, Plant 1, Plant 2..."
               className="w-full pl-8 pr-7 py-2 border border-slate-200 rounded-lg text-sm bg-white"
             />
             <Search className="h-4 w-4 text-slate-400 absolute left-2.5 top-3" />
@@ -738,7 +855,7 @@ export default function StaffManagement() {
               className="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition shadow-sm"
             >
               <Plus className="h-4 w-4" />
-              <span>Process Salary / Advance</span>
+              <span>Process Salary / Advance / Loan</span>
             </button>
           )}
 
@@ -788,7 +905,13 @@ export default function StaffManagement() {
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
                 {paginatedStaff.map(st => {
-                  const loanBal = balances?.staffBalances[st.id]?.advanceLoanBalance || 0;
+                  const staffBal = balances?.staffBalances[st.id];
+                  const advBal = staffBal?.advanceBalance !== undefined ? staffBal.advanceBalance : (staffBal?.advanceLoanBalance || 0);
+                  const loanBal = staffBal?.loanBalance || 0;
+                  const totalDue = staffBal?.advanceLoanBalance !== undefined ? staffBal.advanceLoanBalance : (advBal + loanBal);
+
+                  const isPlant1 = (st.category && st.category.toLowerCase().includes('plant 1')) || (st.designation && st.designation.toLowerCase().includes('plant 1'));
+                  const isPlant2 = (st.category && st.category.toLowerCase().includes('plant 2')) || (st.designation && st.designation.toLowerCase().includes('plant 2'));
 
                   return (
                     <tr key={st.id} className="hover:bg-slate-50/75 transition">
@@ -797,9 +920,17 @@ export default function StaffManagement() {
                         <div className="text-[11px] font-mono text-slate-400">{st.id}</div>
                       </td>
                       <td className="px-5 py-4">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          {st.category || st.designation || 'Staff'}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                            isPlant1
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                              : isPlant2
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : 'bg-slate-50 text-slate-700 border-slate-200'
+                          }`}>
+                            {st.category || st.designation || 'Staff'}
+                          </span>
+                        </div>
                       </td>
                       <td className="px-5 py-4">
                         <p className="text-slate-700 font-medium">{st.phone || '—'}</p>
@@ -822,18 +953,59 @@ export default function StaffManagement() {
                         <span className="text-xs font-normal text-slate-400 block">{st.salaryType || 'Monthly'}</span>
                       </td>
                       <td className="px-5 py-4">
-                        {loanBal > 0 ? (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-black bg-amber-50 text-amber-800 border border-amber-300">
-                            Rs. {loanBal.toLocaleString()}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-400">Rs. 0 (Clear)</span>
-                        )}
+                        <div className="space-y-1 min-w-[140px] text-xs">
+                          <div className="flex justify-between items-center gap-2">
+                            <span className="text-slate-500 font-medium">Advance:</span>
+                            <span className={`font-bold ${advBal > 0 ? 'text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200' : 'text-slate-400'}`}>
+                              Rs. {advBal.toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center gap-2">
+                            <span className="text-slate-500 font-medium">Loan:</span>
+                            <span className={`font-bold ${loanBal > 0 ? 'text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200' : 'text-slate-400'}`}>
+                              Rs. {loanBal.toLocaleString()}
+                            </span>
+                          </div>
+                          {totalDue > 0 && (
+                            <div className="flex justify-between items-center gap-2 pt-1 border-t border-slate-100 font-black text-rose-700">
+                              <span>Total Due:</span>
+                              <span>Rs. {totalDue.toLocaleString()}</span>
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="px-5 py-4 text-right space-x-1.5 whitespace-nowrap no-print">
+                        {advBal > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPaymentForm(undefined, 'advance_repayment', st.id)}
+                            title="Clear Advance with Cash/Bank"
+                            className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-md text-[11px] font-bold transition border border-amber-300"
+                          >
+                            Clear Adv
+                          </button>
+                        )}
+                        {loanBal > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPaymentForm(undefined, 'loan_repayment', st.id)}
+                            title="Clear Loan with Cash/Bank"
+                            className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-md text-[11px] font-bold transition border border-indigo-300"
+                          >
+                            Clear Loan
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenPaymentForm(undefined, 'salary', st.id)}
+                          title="Process Monthly Salary"
+                          className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-md text-[11px] font-bold transition border border-emerald-300"
+                        >
+                          Salary
+                        </button>
                         <button
                           onClick={() => handleOpenLedger(st)}
-                          className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md text-xs font-semibold transition border border-indigo-200"
+                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-[11px] font-semibold transition border border-slate-300"
                         >
                           Ledger
                         </button>
@@ -879,14 +1051,16 @@ export default function StaffManagement() {
                   <th className="px-5 py-3.5">Payment Type</th>
                   <th className="px-5 py-3.5">Particulars / Description</th>
                   <th className="px-5 py-3.5 text-right">Gross Salary / Amount</th>
-                  <th className="px-5 py-3.5 text-right">Advance Adjusted</th>
-                  <th className="px-5 py-3.5 text-right">Net Cash/Bank Paid</th>
+                  <th className="px-5 py-3.5 text-right">Adv &amp; Loan Adjusted</th>
+                  <th className="px-5 py-3.5 text-right">Net Cash/Bank Flow</th>
                   <th className="px-5 py-3.5 text-right no-print">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {paginatedPayments.map(p => {
                   const emp = staff.find(s => s.id === p.staffId);
+                  const isRepayment = p.type === 'advance_repayment' || p.type === 'loan_repayment';
+
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/75 transition">
                       <td className="px-5 py-3.5 whitespace-nowrap">
@@ -895,13 +1069,28 @@ export default function StaffManagement() {
                       </td>
                       <td className="px-5 py-3.5 whitespace-nowrap">
                         <p className="font-bold text-slate-800">{emp?.name || p.staffId}</p>
-                        <p className="text-xs text-slate-400">{emp?.designation || 'Staff'}</p>
+                        <p className="text-xs text-slate-400">{emp?.category || emp?.designation || 'Staff'}</p>
                       </td>
                       <td className="px-5 py-3.5 whitespace-nowrap">
-                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold uppercase ${
-                          p.type === 'salary' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                        <span className={`inline-block px-2.5 py-1 rounded-full text-xs font-bold ${
+                          p.type === 'salary'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : p.type === 'advance'
+                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                            : p.type === 'loan'
+                            ? 'bg-indigo-100 text-indigo-800 border border-indigo-300'
+                            : p.type === 'advance_repayment'
+                            ? 'bg-teal-100 text-teal-800 border border-teal-300'
+                            : p.type === 'loan_repayment'
+                            ? 'bg-purple-100 text-purple-800 border border-purple-300'
+                            : 'bg-blue-100 text-blue-800 border border-blue-300'
                         }`}>
-                          {p.type}
+                          {p.type === 'salary' && 'Salary Payout'}
+                          {p.type === 'advance' && 'Advance (Given)'}
+                          {p.type === 'loan' && 'Loan (Given)'}
+                          {p.type === 'advance_repayment' && 'Adv Repaid (Cash/Bank)'}
+                          {p.type === 'loan_repayment' && 'Loan Repaid (Cash/Bank)'}
+                          {p.type === 'settlement' && 'Settlement'}
                         </span>
                       </td>
                       <td className="px-5 py-3.5 max-w-xs truncate text-slate-600">
@@ -910,12 +1099,27 @@ export default function StaffManagement() {
                       <td className="px-5 py-3.5 text-right font-semibold text-slate-800 whitespace-nowrap">
                         Rs. {p.amount.toLocaleString()}
                       </td>
-                      <td className="px-5 py-3.5 text-right text-amber-700 font-semibold whitespace-nowrap">
-                        {p.advanceAdjusted ? `-Rs. ${p.advanceAdjusted.toLocaleString()}` : '—'}
+                      <td className="px-5 py-3.5 text-right text-xs whitespace-nowrap space-y-0.5">
+                        {p.advanceAdjusted ? (
+                          <div className="text-amber-700 font-bold">Adv: -Rs. {p.advanceAdjusted.toLocaleString()}</div>
+                        ) : null}
+                        {p.loanAdjusted ? (
+                          <div className="text-indigo-700 font-bold">Loan: -Rs. {p.loanAdjusted.toLocaleString()}</div>
+                        ) : null}
+                        {!p.advanceAdjusted && !p.loanAdjusted && <span className="text-slate-400">—</span>}
                       </td>
-                      <td className="px-5 py-3.5 text-right font-black text-emerald-700 whitespace-nowrap">
-                        Rs. {p.netPaid.toLocaleString()}
-                        <span className="block text-[10px] text-slate-400 uppercase font-medium">{p.paymentType}</span>
+                      <td className="px-5 py-3.5 text-right font-black whitespace-nowrap">
+                        {isRepayment ? (
+                          <div>
+                            <span className="text-emerald-700 font-black">+Rs. {p.amount.toLocaleString()}</span>
+                            <span className="block text-[10px] text-teal-600 font-bold uppercase">Received (Debt Cleared)</span>
+                          </div>
+                        ) : (
+                          <div>
+                            <span className="text-slate-900 font-black">Rs. {p.netPaid.toLocaleString()}</span>
+                            <span className="block text-[10px] text-slate-400 uppercase font-medium">{p.paymentType} Out</span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-3.5 text-right whitespace-nowrap no-print space-x-1">
                         <button
@@ -1086,18 +1290,73 @@ export default function StaffManagement() {
 
           {selectedLedgerStaff ? (
             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-4">
-              <div className="flex justify-between items-center border-b pb-3">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900">{selectedLedgerStaff.name}</h3>
-                  <p className="text-xs text-slate-500">ID: {selectedLedgerStaff.id} • Base Salary: Rs. {selectedLedgerStaff.basicSalary.toLocaleString()} / mo</p>
-                </div>
-                <div className="text-right">
-                  <span className="text-xs text-slate-500 font-bold uppercase block">Current Advance / Loan</span>
-                  <span className="text-lg font-black text-amber-700">
-                    Rs. {(balances?.staffBalances[selectedLedgerStaff.id]?.advanceLoanBalance || 0).toLocaleString()}
-                  </span>
-                </div>
-              </div>
+              {(() => {
+                const bal = balances?.staffBalances[selectedLedgerStaff.id];
+                const curAdv = bal?.advanceBalance !== undefined ? bal.advanceBalance : (bal?.advanceLoanBalance || 0);
+                const curLoan = bal?.loanBalance || 0;
+                const totalDebt = bal?.advanceLoanBalance !== undefined ? bal.advanceLoanBalance : (curAdv + curLoan);
+
+                return (
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-xl font-bold text-slate-900">{selectedLedgerStaff.name}</h3>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          {selectedLedgerStaff.category || selectedLedgerStaff.designation}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        ID: <span className="font-mono font-bold text-slate-700">{selectedLedgerStaff.id}</span> • Base Salary: <span className="font-bold text-emerald-700">Rs. {selectedLedgerStaff.basicSalary.toLocaleString()}</span> / mo • Phone: {selectedLedgerStaff.phone || 'N/A'}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg text-center">
+                        <span className="text-[10px] uppercase font-bold text-amber-800 block">Advance Due</span>
+                        <span className="text-sm font-black text-amber-900">Rs. {curAdv.toLocaleString()}</span>
+                      </div>
+
+                      <div className="bg-indigo-50 border border-indigo-200 px-3 py-2 rounded-lg text-center">
+                        <span className="text-[10px] uppercase font-bold text-indigo-800 block">Loan Due</span>
+                        <span className="text-sm font-black text-indigo-900">Rs. {curLoan.toLocaleString()}</span>
+                      </div>
+
+                      <div className="bg-rose-50 border border-rose-200 px-3 py-2 rounded-lg text-center">
+                        <span className="text-[10px] uppercase font-bold text-rose-800 block">Total Due</span>
+                        <span className="text-sm font-black text-rose-900">Rs. {totalDebt.toLocaleString()}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 no-print">
+                        {curAdv > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPaymentForm(undefined, 'advance_repayment', selectedLedgerStaff.id)}
+                            className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold shadow-xs transition"
+                          >
+                            Clear Adv (Cash)
+                          </button>
+                        )}
+                        {curLoan > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPaymentForm(undefined, 'loan_repayment', selectedLedgerStaff.id)}
+                            className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs transition"
+                          >
+                            Clear Loan (Cash)
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenPaymentForm(undefined, 'salary', selectedLedgerStaff.id)}
+                          className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition"
+                        >
+                          Pay Salary
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
@@ -1105,33 +1364,61 @@ export default function StaffManagement() {
                     <tr>
                       <th className="px-3 py-2.5">Date / ID</th>
                       <th className="px-3 py-2.5">Transaction Type</th>
-                      <th className="px-3 py-2.5">Description</th>
-                      <th className="px-3 py-2.5 text-right">Advance Given (Debit)</th>
-                      <th className="px-3 py-2.5 text-right">Advance Deducted (Credit)</th>
-                      <th className="px-3 py-2.5 text-right">Net Cash Paid</th>
-                      <th className="px-3 py-2.5 text-right">Running Advance Balance</th>
+                      <th className="px-3 py-2.5">Particulars / Description</th>
+                      <th className="px-3 py-2.5 text-right">Adv/Loan Out (Debit)</th>
+                      <th className="px-3 py-2.5 text-right">Repaid/Deducted (Credit)</th>
+                      <th className="px-3 py-2.5 text-right">Net Cash Flow</th>
+                      <th className="px-3 py-2.5 text-right">Running Total Due</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {staffEnrichedTransactions.map((tx, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50">
-                        <td className="px-3 py-2.5 font-mono text-indigo-700 font-bold">{tx.date} ({tx.id})</td>
-                        <td className="px-3 py-2.5 uppercase font-bold text-slate-700">{tx.type}</td>
-                        <td className="px-3 py-2.5 text-slate-600">{tx.description}</td>
-                        <td className="px-3 py-2.5 text-right font-bold text-amber-700">
-                          {tx.advanceGiven > 0 ? `Rs. ${tx.advanceGiven.toLocaleString()}` : '—'}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-bold text-emerald-700">
-                          {tx.advanceDeducted > 0 ? `Rs. ${tx.advanceDeducted.toLocaleString()}` : '—'}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-black text-slate-900">
-                          Rs. {tx.netPaid.toLocaleString()}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-black text-indigo-900 bg-indigo-50/30">
-                          Rs. {tx.runningBal.toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
+                    {staffEnrichedTransactions.map((tx, idx) => {
+                      const isRepay = tx.type === 'advance_repayment' || tx.type === 'loan_repayment';
+                      return (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="px-3 py-2.5 font-mono text-indigo-700 font-bold whitespace-nowrap">
+                            {tx.date} <span className="text-[10px] text-slate-400 block">{tx.id}</span>
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap">
+                            <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold ${
+                              tx.type === 'salary'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : tx.type === 'advance'
+                                ? 'bg-amber-100 text-amber-800'
+                                : tx.type === 'loan'
+                                ? 'bg-indigo-100 text-indigo-800'
+                                : isRepay
+                                ? 'bg-teal-100 text-teal-800'
+                                : 'bg-slate-100 text-slate-800'
+                            }`}>
+                              {tx.type === 'salary' && 'Salary Payout'}
+                              {tx.type === 'advance' && 'Advance Given'}
+                              {tx.type === 'loan' && 'Loan Given'}
+                              {tx.type === 'advance_repayment' && 'Adv Repaid (Cash/Bank)'}
+                              {tx.type === 'loan_repayment' && 'Loan Repaid (Cash/Bank)'}
+                              {tx.type === 'settlement' && 'Settlement'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-600 max-w-xs">{tx.description}</td>
+                          <td className="px-3 py-2.5 text-right font-bold text-amber-800 whitespace-nowrap">
+                            {tx.totalGiven > 0 ? `Rs. ${tx.totalGiven.toLocaleString()}` : '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-bold text-emerald-700 whitespace-nowrap">
+                            {tx.totalRepaid > 0 ? `Rs. ${tx.totalRepaid.toLocaleString()}` : '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-black whitespace-nowrap">
+                            {isRepay ? (
+                              <span className="text-teal-700">+Rs. {tx.amount.toLocaleString()} In</span>
+                            ) : (
+                              <span className="text-slate-800">Rs. {tx.netPaid.toLocaleString()} Out</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-black text-rose-900 bg-rose-50/30 whitespace-nowrap">
+                            Rs. {tx.runningBal.toLocaleString()}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1143,27 +1430,62 @@ export default function StaffManagement() {
                   <thead className="bg-slate-50 text-slate-600 uppercase font-bold">
                     <tr>
                       <th className="px-4 py-3">Staff Member</th>
-                      <th className="px-4 py-3">Category</th>
+                      <th className="px-4 py-3">Category &amp; Plant</th>
                       <th className="px-4 py-3 text-right">Base Salary</th>
-                      <th className="px-4 py-3 text-right">Outstanding Advance</th>
-                      <th className="px-4 py-3 text-right no-print">Action</th>
+                      <th className="px-4 py-3 text-right">Advance Balance</th>
+                      <th className="px-4 py-3 text-right">Loan Balance</th>
+                      <th className="px-4 py-3 text-right">Total Due</th>
+                      <th className="px-4 py-3 text-right no-print">Quick Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {staff.map(s => {
-                      const curBal = balances?.staffBalances[s.id]?.advanceLoanBalance || 0;
+                    {filteredStaff.map(s => {
+                      const staffBal = balances?.staffBalances[s.id];
+                      const curAdv = staffBal?.advanceBalance !== undefined ? staffBal.advanceBalance : (staffBal?.advanceLoanBalance || 0);
+                      const curLoan = staffBal?.loanBalance || 0;
+                      const curTotal = staffBal?.advanceLoanBalance !== undefined ? staffBal.advanceLoanBalance : (curAdv + curLoan);
+
                       return (
                         <tr key={s.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-3 font-bold text-slate-800">{s.name} ({s.id})</td>
+                          <td className="px-4 py-3 font-bold text-slate-800 whitespace-nowrap">
+                            {s.name} <span className="font-mono text-slate-400 block text-[11px]">{s.id}</span>
+                          </td>
                           <td className="px-4 py-3 text-slate-600">{s.category || s.designation}</td>
                           <td className="px-4 py-3 text-right font-semibold text-slate-700">Rs. {s.basicSalary.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-right font-black text-amber-700">Rs. {curBal.toLocaleString()}</td>
-                          <td className="px-4 py-3 text-right no-print">
+                          <td className="px-4 py-3 text-right font-bold text-amber-700">Rs. {curAdv.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-bold text-indigo-700">Rs. {curLoan.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-black text-rose-700">Rs. {curTotal.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right no-print space-x-1 whitespace-nowrap">
+                            {curAdv > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPaymentForm(undefined, 'advance_repayment', s.id)}
+                                className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded text-[11px] font-bold border border-amber-300"
+                              >
+                                Clear Adv
+                              </button>
+                            )}
+                            {curLoan > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPaymentForm(undefined, 'loan_repayment', s.id)}
+                                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded text-[11px] font-bold border border-indigo-300"
+                              >
+                                Clear Loan
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenPaymentForm(undefined, 'salary', s.id)}
+                              className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded text-[11px] font-bold border border-emerald-300"
+                            >
+                              Salary
+                            </button>
                             <button
                               onClick={() => handleOpenLedger(s)}
-                              className="text-indigo-600 hover:text-indigo-800 font-bold"
+                              className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[11px] font-semibold border border-indigo-200"
                             >
-                              View Statement ➔
+                              Statement ➔
                             </button>
                           </td>
                         </tr>
@@ -1422,13 +1744,39 @@ export default function StaffManagement() {
                   <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Payment Type *</label>
                   <select
                     value={payType}
-                    onChange={e => setPayType(e.target.value as any)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-bold"
+                    onChange={e => {
+                      const newType = e.target.value as any;
+                      setPayType(newType);
+                      const s = staff.find(st => st.id === payStaffId);
+                      const bal = balances?.staffBalances[payStaffId];
+                      if (newType === 'salary') {
+                        if (s) setPayAmount(s.basicSalary);
+                        setPayAdvanceAdjusted(0);
+                        setPayLoanAdjusted(0);
+                      } else if (newType === 'advance_repayment') {
+                        const curAdv = bal?.advanceBalance !== undefined ? bal.advanceBalance : (bal?.advanceLoanBalance || 0);
+                        setPayAmount(curAdv > 0 ? curAdv : 0);
+                        setPayAdvanceAdjusted(0);
+                        setPayLoanAdjusted(0);
+                      } else if (newType === 'loan_repayment') {
+                        const curLoan = bal?.loanBalance || 0;
+                        setPayAmount(curLoan > 0 ? curLoan : 0);
+                        setPayAdvanceAdjusted(0);
+                        setPayLoanAdjusted(0);
+                      } else {
+                        setPayAmount(0);
+                        setPayAdvanceAdjusted(0);
+                        setPayLoanAdjusted(0);
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-bold text-slate-800"
                   >
-                    <option value="salary">Monthly Salary</option>
-                    <option value="advance">Staff Advance</option>
-                    <option value="loan">Staff Loan</option>
-                    <option value="settlement">Final Settlement</option>
+                    <option value="salary">Monthly Salary Payout (with Deductions)</option>
+                    <option value="advance">Give Staff Advance (Company Money Out)</option>
+                    <option value="loan">Give Staff Loan (Company Money Out)</option>
+                    <option value="advance_repayment">Receive Advance Repayment (Cash/Bank Received - Clears Advance)</option>
+                    <option value="loan_repayment">Receive Loan Repayment (Cash/Bank Received - Clears Loan)</option>
+                    <option value="settlement">Final Employee Settlement</option>
                   </select>
                 </div>
               </div>
@@ -1436,27 +1784,120 @@ export default function StaffManagement() {
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Select Employee *</label>
                 <SearchableSelect
-                  options={staff.map(s => ({
-                    value: s.id,
-                    label: s.name,
-                    subLabel: `Base Salary: Rs. ${s.basicSalary.toLocaleString()} • Advance: Rs. ${(balances?.staffBalances[s.id]?.advanceLoanBalance || 0).toLocaleString()}`,
-                    searchTerms: `${s.name} ${s.phone || ''}`
-                  }))}
+                  options={staff.map(s => {
+                    const sb = balances?.staffBalances[s.id];
+                    const ca = sb?.advanceBalance !== undefined ? sb.advanceBalance : (sb?.advanceLoanBalance || 0);
+                    const cl = sb?.loanBalance || 0;
+                    return {
+                      value: s.id,
+                      label: `${s.name} (${s.category || s.designation || 'Staff'})`,
+                      subLabel: `Base Salary: Rs. ${s.basicSalary.toLocaleString()} • Advance: Rs. ${ca.toLocaleString()} • Loan: Rs. ${cl.toLocaleString()}`,
+                      searchTerms: `${s.name} ${s.phone || ''} ${s.category || ''} ${s.designation || ''}`
+                    };
+                  })}
                   value={payStaffId}
                   onChange={val => {
                     setPayStaffId(val);
                     const s = staff.find(st => st.id === val);
+                    const bal = balances?.staffBalances[val];
                     if (s && payType === 'salary') setPayAmount(s.basicSalary);
+                    if (payType === 'advance_repayment') {
+                      const curAdv = bal?.advanceBalance !== undefined ? bal.advanceBalance : (bal?.advanceLoanBalance || 0);
+                      setPayAmount(curAdv > 0 ? curAdv : 0);
+                    }
+                    if (payType === 'loan_repayment') {
+                      const curLoan = bal?.loanBalance || 0;
+                      setPayAmount(curLoan > 0 ? curLoan : 0);
+                    }
                   }}
                   placeholder="-- Select Employee --"
                 />
               </div>
 
+              {payStaffId && (() => {
+                const bal = balances?.staffBalances[payStaffId];
+                const curAdv = bal?.advanceBalance !== undefined ? bal.advanceBalance : (bal?.advanceLoanBalance || 0);
+                const curLoan = bal?.loanBalance || 0;
+                const totalDebt = bal?.advanceLoanBalance !== undefined ? bal.advanceLoanBalance : (curAdv + curLoan);
+
+                return (
+                  <div className="grid grid-cols-3 gap-2 p-2.5 bg-slate-100 rounded-lg border border-slate-200 text-xs">
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase font-bold block">Current Advance</span>
+                      <span className="font-bold text-amber-800">Rs. {curAdv.toLocaleString()}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase font-bold block">Current Loan</span>
+                      <span className="font-bold text-indigo-800">Rs. {curLoan.toLocaleString()}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-500 uppercase font-bold block">Total Debt</span>
+                      <span className="font-black text-rose-800">Rs. {totalDebt.toLocaleString()}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                {payType === 'advance_repayment' && (
+                  <div className="bg-teal-50 border border-teal-200 p-2.5 rounded-lg text-xs text-teal-800">
+                    <p className="font-bold">Advance Repayment / Return:</p>
+                    <p>Staff is paying back advance in Cash/Bank. This will <strong>reduce/clear their advance debt</strong> and <strong>increase company cash/bank</strong>.</p>
+                  </div>
+                )}
+
+                {payType === 'loan_repayment' && (
+                  <div className="bg-purple-50 border border-purple-200 p-2.5 rounded-lg text-xs text-purple-800">
+                    <p className="font-bold">Loan Repayment / Installment:</p>
+                    <p>Staff is paying back loan in Cash/Bank. This will <strong>reduce/clear their loan debt</strong> and <strong>increase company cash/bank</strong>.</p>
+                  </div>
+                )}
+
+                {payType === 'advance' && (
+                  <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-xs text-amber-800">
+                    <p className="font-bold">Staff Advance Payout:</p>
+                    <p>Giving advance to staff. This will <strong>increase their advance debt</strong> and <strong>pay out from company cash/bank</strong>.</p>
+                  </div>
+                )}
+
+                {payType === 'loan' && (
+                  <div className="bg-indigo-50 border border-indigo-200 p-2.5 rounded-lg text-xs text-indigo-800">
+                    <p className="font-bold">Staff Loan Payout:</p>
+                    <p>Giving loan to staff. This will <strong>increase their loan debt</strong> and <strong>pay out from company cash/bank</strong>.</p>
+                  </div>
+                )}
+
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    {payType === 'salary' ? 'Gross Salary (Rs.)' : 'Amount (Rs.)'} *
-                  </label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-bold text-slate-700 uppercase">
+                      {payType === 'salary' ? 'Gross Salary (Rs.)' : (payType === 'advance_repayment' ? 'Repayment Amount (Rs.)' : (payType === 'loan_repayment' ? 'Loan Repayment Amount (Rs.)' : 'Amount (Rs.)'))} *
+                    </label>
+                    {payType === 'advance_repayment' && payStaffId && (() => {
+                      const sb = balances?.staffBalances[payStaffId];
+                      const curAdv = sb?.advanceBalance !== undefined ? sb.advanceBalance : (sb?.advanceLoanBalance || 0);
+                      return curAdv > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setPayAmount(curAdv)}
+                          className="text-[11px] font-bold text-teal-700 hover:underline"
+                        >
+                          Clear Full Advance (Rs. {curAdv.toLocaleString()})
+                        </button>
+                      ) : null;
+                    })()}
+                    {payType === 'loan_repayment' && payStaffId && (() => {
+                      const curLoan = balances?.staffBalances[payStaffId]?.loanBalance || 0;
+                      return curLoan > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setPayAmount(curLoan)}
+                          className="text-[11px] font-bold text-purple-700 hover:underline"
+                        >
+                          Clear Full Loan (Rs. {curLoan.toLocaleString()})
+                        </button>
+                      ) : null;
+                    })()}
+                  </div>
                   <input
                     type="number"
                     min="1"
@@ -1467,28 +1908,87 @@ export default function StaffManagement() {
                   />
                 </div>
 
-                {payType === 'salary' && (
-                  <div>
-                    <div className="flex justify-between text-xs font-bold mb-1">
-                      <span className="text-amber-800">Deduct Advance / Loan (Rs.)</span>
-                      <span className="text-slate-500">
-                        Max Advance: Rs. {(balances?.staffBalances[payStaffId]?.advanceLoanBalance || 0).toLocaleString()}
-                      </span>
+                {(payType === 'salary' || payType === 'settlement') && (
+                  <div className="space-y-3 pt-2 border-t border-slate-200">
+                    <div>
+                      <div className="flex justify-between text-xs font-bold mb-1">
+                        <span className="text-amber-800">Deduct Advance from Salary (Rs.)</span>
+                        {(() => {
+                          const curAdv = balances?.staffBalances[payStaffId]?.advanceBalance !== undefined ? balances.staffBalances[payStaffId].advanceBalance : (balances?.staffBalances[payStaffId]?.advanceLoanBalance || 0);
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span className="text-slate-500">Max: Rs. {curAdv.toLocaleString()}</span>
+                              {curAdv > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPayAdvanceAdjusted(Math.min(payAmount, curAdv))}
+                                  className="text-[11px] text-amber-700 hover:underline font-bold"
+                                >
+                                  Deduct All
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      <input
+                        type="number"
+                        min="0"
+                        value={payAdvanceAdjusted === 0 ? '' : payAdvanceAdjusted}
+                        onChange={e => setPayAdvanceAdjusted(e.target.value === '' ? 0 : Number(e.target.value))}
+                        placeholder="0"
+                        className="w-full px-3 py-2 border border-amber-300 rounded-lg text-xs font-semibold bg-white"
+                      />
                     </div>
-                    <input
-                      type="number"
-                      min="0"
-                      value={payAdvanceAdjusted === 0 ? '' : payAdvanceAdjusted}
-                      onChange={e => setPayAdvanceAdjusted(e.target.value === '' ? 0 : Number(e.target.value))}
-                      className="w-full px-3 py-2 border border-amber-300 rounded-lg text-xs font-semibold bg-white"
-                    />
+
+                    <div>
+                      <div className="flex justify-between text-xs font-bold mb-1">
+                        <span className="text-indigo-800">Deduct Loan from Salary (Rs.)</span>
+                        {(() => {
+                          const curLoan = balances?.staffBalances[payStaffId]?.loanBalance || 0;
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span className="text-slate-500">Max: Rs. {curLoan.toLocaleString()}</span>
+                              {curLoan > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPayLoanAdjusted(Math.min(payAmount - payAdvanceAdjusted, curLoan))}
+                                  className="text-[11px] text-indigo-700 hover:underline font-bold"
+                                >
+                                  Deduct All
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                      <input
+                        type="number"
+                        min="0"
+                        value={payLoanAdjusted === 0 ? '' : payLoanAdjusted}
+                        onChange={e => setPayLoanAdjusted(e.target.value === '' ? 0 : Number(e.target.value))}
+                        placeholder="0"
+                        className="w-full px-3 py-2 border border-indigo-300 rounded-lg text-xs font-semibold bg-white"
+                      />
+                    </div>
                   </div>
                 )}
 
                 <div className="pt-2 border-t flex justify-between items-center text-sm">
-                  <span className="font-black text-slate-900">Net Cash/Bank Payout:</span>
-                  <span className="text-lg font-black text-emerald-700">
-                    Rs. {Math.max(0, payAmount - (payType === 'salary' ? payAdvanceAdjusted : 0)).toLocaleString()}
+                  <span className="font-black text-slate-900">
+                    {(payType === 'advance_repayment' || payType === 'loan_repayment')
+                      ? 'Cash/Bank Received (Inflow):'
+                      : (payType === 'salary' || payType === 'settlement')
+                      ? 'Net Cash/Bank Payout (Outflow):'
+                      : 'Amount to Disburse (Outflow):'}
+                  </span>
+                  <span className={`text-lg font-black ${(payType === 'advance_repayment' || payType === 'loan_repayment') ? 'text-teal-700' : 'text-emerald-700'}`}>
+                    Rs. {(() => {
+                      if (payType === 'salary' || payType === 'settlement') {
+                        return Math.max(0, payAmount - (payAdvanceAdjusted || 0) - (payLoanAdjusted || 0)).toLocaleString();
+                      }
+                      return (payAmount || 0).toLocaleString();
+                    })()}
                   </span>
                 </div>
               </div>

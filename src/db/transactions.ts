@@ -58,6 +58,8 @@ export interface LiveBalances {
   staffBalances: {
     [staffId: string]: {
       advanceLoanBalance: number; // positive means they owe us
+      advanceBalance: number;
+      loanBalance: number;
     }
   };
 }
@@ -361,9 +363,9 @@ export async function calculateLiveBalances(preloadedData?: PreloadedBalanceData
   }
 
   // Initialize staff balances
-  const staffBalances: { [staffId: string]: { advanceLoanBalance: number } } = {};
+  const staffBalances: { [staffId: string]: { advanceLoanBalance: number; advanceBalance: number; loanBalance: number } } = {};
   for (const st of staff) {
-    staffBalances[st.id] = { advanceLoanBalance: 0 };
+    staffBalances[st.id] = { advanceLoanBalance: 0, advanceBalance: 0, loanBalance: 0 };
   }
 
   let cashBalance = 0;
@@ -409,8 +411,13 @@ export async function calculateLiveBalances(preloadedData?: PreloadedBalanceData
         vendorBalances[entry.accountId].totalPaid += entry.debit;
       }
     } else if (staffBalances[entry.accountId] !== undefined) {
-      // Staff advance/loan: debit increases it, credit (salary adjustment) decreases it
+      // Staff advance/loan: debit increases it, credit (salary adjustment or cash repayment) decreases it
       staffBalances[entry.accountId].advanceLoanBalance += amt;
+      if (entry.type === 'staff_loan' || entry.type === 'staff_loan_repayment' || entry.type === 'salary_loan_deduction') {
+        staffBalances[entry.accountId].loanBalance += amt;
+      } else {
+        staffBalances[entry.accountId].advanceBalance += amt;
+      }
     }
   }
 
@@ -1106,8 +1113,8 @@ export async function saveStaffPaymentTransaction(pay: DBStaffPayment): Promise<
   const cashBankType = pay.paymentType === 'Cash' ? 'cash' : 'bank';
 
   if (pay.type === 'advance' || pay.type === 'loan') {
-    // Advance or Loan given to staff:
-    // Debit Staff Account (increasing their asset/receivable from our side)
+    // Advance or Loan given to staff (Money Out)
+    // Debit Staff Account (increasing their receivable debt from our side)
     // Credit Cash/Bank
     await putRecord<DBLedgerEntry>('ledgers', {
       id: generateUuid(),
@@ -1133,10 +1140,43 @@ export async function saveStaffPaymentTransaction(pay: DBStaffPayment): Promise<
       description: `Paid Staff ${pay.type}: ${pay.description}`,
     });
 
+  } else if (pay.type === 'advance_repayment' || pay.type === 'loan_repayment') {
+    // Staff returns/clears Advance or Loan via Cash or Bank (Money In)
+    // Debit: Cash/Bank (Company receives money)
+    // Credit: Staff Account (Decreases staff debt)
+    const isLoan = pay.type === 'loan_repayment';
+    const ledgerType = isLoan ? 'staff_loan_repayment' : 'staff_advance_repayment';
+    const label = isLoan ? 'Staff Loan Repayment' : 'Staff Advance Repayment';
+
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: pay.date,
+      type: ledgerType,
+      referenceId: pay.id,
+      accountId: cashBankAcc,
+      accountType: cashBankType as any,
+      debit: pay.amount,
+      credit: 0,
+      description: `${label} received into ${pay.paymentType}: ${pay.description}`,
+    });
+
+    await putRecord<DBLedgerEntry>('ledgers', {
+      id: generateUuid(),
+      date: pay.date,
+      type: ledgerType,
+      referenceId: pay.id,
+      accountId: pay.staffId,
+      accountType: 'staff',
+      debit: 0,
+      credit: pay.amount,
+      description: `${label} credited to clear balance: ${pay.description}`,
+    });
+
   } else if (pay.type === 'salary') {
     // Salary Payment
-    // Debit: salary_expense (Gross Salary = netPaid + advanceAdjusted)
-    // Credit: Staff Account (by advanceAdjusted amount, reducing their loan/advance)
+    // Debit: salary_expense (Gross Salary)
+    // Credit: Staff Account (by advanceAdjusted amount, reducing advance debt)
+    // Credit: Staff Account (by loanAdjusted amount, reducing loan debt)
     // Credit: Cash/Bank (by netPaid amount, the actual payout)
     
     // Debit: Salary Expense
@@ -1167,6 +1207,21 @@ export async function saveStaffPaymentTransaction(pay: DBStaffPayment): Promise<
       });
     }
 
+    // Credit: Staff Loan reduction (if any)
+    if (pay.loanAdjusted && pay.loanAdjusted > 0) {
+      await putRecord<DBLedgerEntry>('ledgers', {
+        id: generateUuid(),
+        date: pay.date,
+        type: 'salary_loan_deduction',
+        referenceId: pay.id,
+        accountId: pay.staffId,
+        accountType: 'staff',
+        debit: 0,
+        credit: pay.loanAdjusted,
+        description: `Loan adjustment against salary`,
+      });
+    }
+
     // Credit: Cash/Bank payout
     if (pay.netPaid > 0) {
       await putRecord<DBLedgerEntry>('ledgers', {
@@ -1184,7 +1239,7 @@ export async function saveStaffPaymentTransaction(pay: DBStaffPayment): Promise<
   } else if (pay.type === 'settlement') {
     // Final Settlement
     // Debit: salary_expense (Settlement Amount)
-    // Credit: Staff Account (if adjustment)
+    // Credit: Staff Account (if advance/loan adjustment)
     // Credit: Cash/Bank (net settlement payout)
     await putRecord<DBLedgerEntry>('ledgers', {
       id: generateUuid(),
@@ -1212,6 +1267,20 @@ export async function saveStaffPaymentTransaction(pay: DBStaffPayment): Promise<
       });
     }
 
+    if (pay.loanAdjusted && pay.loanAdjusted > 0) {
+      await putRecord<DBLedgerEntry>('ledgers', {
+        id: generateUuid(),
+        date: pay.date,
+        type: 'salary_loan_deduction',
+        referenceId: pay.id,
+        accountId: pay.staffId,
+        accountType: 'staff',
+        debit: 0,
+        credit: pay.loanAdjusted,
+        description: `Loan adjusted in settlement`,
+      });
+    }
+
     if (pay.netPaid > 0) {
       await putRecord<DBLedgerEntry>('ledgers', {
         id: generateUuid(),
@@ -1230,12 +1299,7 @@ export async function saveStaffPaymentTransaction(pay: DBStaffPayment): Promise<
 
 export async function deleteStaffPaymentTransaction(payId: string): Promise<void> {
   await deleteRecord('staff_payments', payId);
-  const ledgers = await getAllRecords<DBLedgerEntry>('ledgers');
-  for (const entry of ledgers) {
-    if (entry.referenceId === payId && (entry.type === 'salary_payment' || entry.type === 'staff_advance' || entry.type === 'staff_loan')) {
-      await deleteRecord('ledgers', entry.id);
-    }
-  }
+  await clearLedgersForTransaction(payId);
 }
 
 // ==========================================
