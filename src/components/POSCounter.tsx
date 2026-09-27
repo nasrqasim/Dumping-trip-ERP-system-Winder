@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getAllRecords, DBSale, DBCustomer, DBItem, DBBank, DBVendor, DBVehicle, DBStaff, DBDieselTransaction } from '../db/firestore';
 import { calculateLiveBalances, LiveBalances, saveSaleTransaction, saveDieselTransaction } from '../db/transactions';
-import { ShoppingCart, User, Plus, Search, Trash, Printer, History, Fuel, Truck, CheckCircle } from 'lucide-react';
+import { ShoppingCart, User, Plus, Search, Trash, Edit, Printer, History, Fuel, Truck, CheckCircle } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import Pagination from './Pagination';
 import ThermalReceipt from './ThermalReceipt';
@@ -72,6 +72,10 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
   // Last print slip state
   const [lastSavedSale, setLastSavedSale] = useState<DBSale | null>(null);
 
+  // Edit Sale State
+  const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
+  const [editingSaleDate, setEditingSaleDate] = useState<string>('');
+
   const loadData = async () => {
     try {
       const [allItems, allCustomers, allBanks, allSales, allVendors, allVehicles, allStaff] = await Promise.all([
@@ -132,6 +136,41 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
     }
   }, [itemId, items]);
 
+  const handleEditSale = (sale: DBSale) => {
+    setEditingSaleId(sale.id);
+    setEditingSaleDate(sale.date);
+    setCustomerId(sale.customerId === 'walk-in' ? '' : sale.customerId);
+    setItemId(sale.itemId);
+    setQuantity(sale.quantity);
+    setRate(sale.rate);
+    setDiscount(sale.discount || 0);
+    setPaymentType(sale.paymentType || 'Cash');
+    setPaidAmount(sale.paidAmount !== undefined ? sale.paidAmount : (sale.paymentType === 'Cash' || sale.paymentType === 'Bank' ? sale.total : 0));
+    setIsPaidTouched(true);
+    if (sale.bankId) {
+      setBankId(sale.bankId);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingSaleId(null);
+    setEditingSaleDate('');
+    setQuantity('');
+    setDiscount(0);
+    setPaidAmount(0);
+    setIsPaidTouched(false);
+    setIncludeDiesel(false);
+    setDieselVehicleId('');
+    setDieselDriverName('');
+    setDieselVendorId('');
+    setDieselLitres('');
+    setDieselRate(280);
+    setDieselTotal(0);
+    setDieselSlipNo('');
+    setDieselPaymentType('Credit');
+  };
+
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     const effectiveCustomerId = customerId.trim() || 'walk-in';
@@ -159,17 +198,20 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
     const materialTotal = Math.round(numQty * numRate * 100) / 100;
     const total = Math.max(0, materialTotal - (Number(discount) || 0));
 
-    const prefix = 'pos-';
-    const existingIds = sales.map(s => s.id).filter(id => id.startsWith(prefix));
-    let maxNum = 0;
-    for (const id of existingIds) {
-      const numPart = parseInt(id.replace(prefix, ''), 10);
-      if (!isNaN(numPart) && numPart > maxNum) {
-        maxNum = numPart;
+    let saleId = editingSaleId;
+    if (!saleId) {
+      const prefix = 'pos-';
+      const existingIds = sales.map(s => s.id).filter(id => id.startsWith(prefix));
+      let maxNum = 0;
+      for (const id of existingIds) {
+        const numPart = parseInt(id.replace(prefix, ''), 10);
+        if (!isNaN(numPart) && numPart > maxNum) {
+          maxNum = numPart;
+        }
       }
+      const nextNum = maxNum + 1;
+      saleId = `${prefix}${String(nextNum).padStart(3, '0')}`;
     }
-    const nextNum = maxNum + 1;
-    const saleId = `${prefix}${String(nextNum).padStart(3, '0')}`;
 
     const finalPaid = paymentType === 'Credit' 
       ? (isPaidTouched ? Number(paidAmount) || 0 : 0)
@@ -177,7 +219,7 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
 
     const sale: DBSale = {
       id: saleId,
-      date: new Date().toISOString().split('T')[0],
+      date: editingSaleId && editingSaleDate ? editingSaleDate : new Date().toISOString().split('T')[0],
       customerId: effectiveCustomerId,
       itemId,
       quantity: numQty,
@@ -223,6 +265,9 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
       }
 
       setLastSavedSale(sale);
+      const wasEditing = !!editingSaleId;
+      setEditingSaleId(null);
+      setEditingSaleDate('');
       
       // Reset Form
       setQuantity('');
@@ -239,7 +284,7 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
       setDieselSlipNo('');
       setDieselPaymentType('Credit');
 
-      alert('POS Counter Sale completed successfully!');
+      alert(wasEditing ? `POS Sale #${saleId} updated successfully!` : 'POS Counter Sale completed successfully!');
       loadData();
     } catch (err: any) {
       console.error(err);
@@ -421,6 +466,24 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
               <ShoppingCart className="h-5 w-5 text-indigo-600" />
               <span>Checkout Register</span>
             </h3>
+
+            {editingSaleId && (
+              <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-amber-500 animate-ping"></span>
+                  <span className="text-xs font-bold text-amber-900">
+                    Editing Past Sale Invoice: <span className="font-mono underline font-extrabold">{editingSaleId}</span> ({editingSaleDate})
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="text-xs font-bold text-rose-600 hover:text-rose-800 bg-white border border-rose-200 px-2.5 py-1 rounded shadow-xs hover:bg-rose-50"
+                >
+                  Cancel Edit
+                </button>
+              </div>
+            )}
 
             {/* Quick Material selector */}
             <div className="space-y-3">
@@ -798,9 +861,11 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
               <div className="pt-4 border-t border-slate-100 flex justify-end">
                 <button
                   type="submit"
-                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition shadow-sm"
+                  className={`px-6 py-2.5 text-white rounded-lg text-sm font-bold transition shadow-sm ${
+                    editingSaleId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'
+                  }`}
                 >
-                  Complete Checkout Sale
+                  {editingSaleId ? `Update Invoice #${editingSaleId}` : 'Complete Checkout Sale'}
                 </button>
               </div>
             </form>
@@ -982,6 +1047,13 @@ export default function POSCounter({ preselectedCustomerId, onClearPreselectedCu
                         </span>
                       </td>
                       <td className="px-3 py-3 text-right space-x-2 whitespace-nowrap no-print">
+                        <button
+                          onClick={() => handleEditSale(sale)}
+                          className="text-amber-700 hover:text-amber-900 font-semibold text-xs px-2 py-1 bg-amber-50 hover:bg-amber-100 rounded transition inline-flex items-center gap-1 border border-amber-200"
+                        >
+                          <Edit className="h-3 w-3 inline" />
+                          <span>Edit</span>
+                        </button>
                         <button
                           onClick={() => setActiveViewSale(sale)}
                           className="text-indigo-600 hover:text-indigo-800 font-semibold text-xs px-2 py-1 bg-indigo-50 hover:bg-indigo-100 rounded transition"

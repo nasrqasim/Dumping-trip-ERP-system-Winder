@@ -58,6 +58,13 @@ export default function DirectPurchases() {
   const [vehicleId, setVehicleId] = useState('');
   const [notes, setNotes] = useState('');
 
+  // Quick Add Vendor State
+  const [isQuickVendorOpen, setIsQuickVendorOpen] = useState(false);
+  const [newVendorName, setNewVendorName] = useState('');
+  const [newVendorPhone, setNewVendorPhone] = useState('');
+  const [newVendorCategory, setNewVendorCategory] = useState('Diesel / Fuel Supplier');
+  const [newVendorAddress, setNewVendorAddress] = useState('');
+
   const defaultCategories = [
     'Diesel / Fuel',
     'Vehicle Maintenance & Spare Parts',
@@ -69,6 +76,48 @@ export default function DirectPurchases() {
     'Safety & PPE Equipment',
     'Other Direct Expense'
   ];
+
+  const handleQuickAddVendor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newVendorName.trim()) {
+      alert('Please enter vendor name');
+      return;
+    }
+
+    let maxNum = 0;
+    for (const v of vendors) {
+      if (v.id && v.id.startsWith('vend-')) {
+        const n = parseInt(v.id.replace('vend-', ''), 10);
+        if (!isNaN(n) && n > maxNum) maxNum = n;
+      }
+    }
+    const newVendId = `vend-${String(maxNum + 1).padStart(3, '0')}`;
+
+    const newVendor: DBVendor = {
+      id: newVendId,
+      name: newVendorName.trim(),
+      phone: newVendorPhone.trim(),
+      address: newVendorAddress.trim() || 'Winder',
+      category: newVendorCategory,
+      openingBalance: 0,
+      notes: 'Added from Direct Purchases'
+    };
+
+    try {
+      await putRecord<DBVendor>('vendors', newVendor);
+      setVendors(prev => [newVendor, ...prev]);
+      setVendorId(newVendId);
+      setIsQuickVendorOpen(false);
+      setNewVendorName('');
+      setNewVendorPhone('');
+      setNewVendorAddress('');
+      const liveBal = await calculateLiveBalances();
+      setBalances(liveBal);
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to save new vendor: ' + (err?.message || err));
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -565,13 +614,28 @@ export default function DirectPurchases() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Vendor / Supplier *</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-bold text-slate-700 uppercase">Vendor / Supplier *</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewVendorName('');
+                        setNewVendorPhone('');
+                        setNewVendorAddress('');
+                        setIsQuickVendorOpen(true);
+                      }}
+                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                    >
+                      <Plus className="h-3 w-3 inline" />
+                      <span>Add New Vendor</span>
+                    </button>
+                  </div>
                   <SearchableSelect
                     options={vendors.map(v => ({
                       value: v.id,
                       label: v.name,
                       subLabel: `Payable: Rs. ${(balances?.vendorBalances[v.id]?.outstanding || 0).toLocaleString()}`,
-                      searchTerms: `${v.name} ${v.phone || ''}`
+                      searchTerms: `${v.name} ${v.phone || ''} ${v.category || ''}`
                     }))}
                     value={vendorId}
                     onChange={val => setVendorId(val)}
@@ -803,6 +867,101 @@ export default function DirectPurchases() {
                 >
                   <CheckCircle className="h-4 w-4" />
                   <span>Save Direct Purchase</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Add Vendor Modal */}
+      {isQuickVendorOpen && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden">
+            <div className="bg-slate-900 text-white p-4 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Building2 className="h-5 w-5 text-indigo-400" />
+                <h3 className="font-bold text-base">Add New Vendor / Supplier</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsQuickVendorOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleQuickAddVendor} className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Vendor / Company Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Hascol Winder Pump, Quetta Mistri"
+                  value={newVendorName}
+                  onChange={e => setNewVendorName(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-bold text-slate-900"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    placeholder="03xx-xxxxxxx"
+                    value={newVendorPhone}
+                    onChange={e => setNewVendorPhone(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Category / Type</label>
+                  <select
+                    value={newVendorCategory}
+                    onChange={e => setNewVendorCategory(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white font-medium"
+                  >
+                    <option value="Diesel / Fuel Supplier">Diesel / Fuel Supplier</option>
+                    <option value="Spare Parts &amp; Tyres">Spare Parts &amp; Tyres</option>
+                    <option value="Workshop &amp; Repair">Workshop &amp; Repair</option>
+                    <option value="General Supplier">General Supplier</option>
+                    <option value="Hardware &amp; Machinery">Hardware &amp; Machinery</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Address / Location</label>
+                <input
+                  type="text"
+                  placeholder="e.g. RCD Highway Winder"
+                  value={newVendorAddress}
+                  onChange={e => setNewVendorAddress(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                />
+              </div>
+
+              <div className="p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-[11px] text-indigo-800">
+                This vendor will be permanently saved to the <strong>Vendors page</strong> and automatically selected for this purchase.
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t">
+                <button
+                  type="button"
+                  onClick={() => setIsQuickVendorOpen(false)}
+                  className="px-4 py-2 border rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold flex items-center space-x-1.5"
+                >
+                  <CheckCircle className="h-4 w-4" />
+                  <span>Save &amp; Select Vendor</span>
                 </button>
               </div>
             </form>

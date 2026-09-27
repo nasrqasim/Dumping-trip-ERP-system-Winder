@@ -263,6 +263,7 @@ export interface DBStaff {
   designation: string;
   basicSalary: number;
   category?: string;
+  plant?: string;
   cnic?: string;
   cnicDocUrl?: string;
   licenseNo?: string;

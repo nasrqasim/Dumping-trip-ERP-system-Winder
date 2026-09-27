@@ -95,6 +95,7 @@ export default function StaffManagement() {
   const [phone, setPhone] = useState('');
   const [designation, setDesignation] = useState('');
   const [category, setCategory] = useState('Driver');
+  const [staffPlant, setStaffPlant] = useState('');
   const [cnic, setCnic] = useState('');
   const [cnicDocUrl, setCnicDocUrl] = useState('');
   const [isUploadingImage, setIsUploadingImage] = useState(false);
@@ -285,6 +286,7 @@ export default function StaffManagement() {
       setPhone(st.phone || '');
       setDesignation(st.designation || '');
       setCategory(st.category || 'Driver');
+      setStaffPlant(st.plant || '');
       setCnic(st.cnic || '');
       setCnicDocUrl(st.cnicDocUrl || '');
       setLicenseNo(st.licenseNo || '');
@@ -299,6 +301,7 @@ export default function StaffManagement() {
       setPhone('');
       setDesignation('');
       setCategory('Driver');
+      setStaffPlant('');
       setCnic('');
       setCnicDocUrl('');
       setLicenseNo('');
@@ -338,6 +341,7 @@ export default function StaffManagement() {
       phone: phone.trim(),
       designation: designation.trim() || category,
       category,
+      plant: staffPlant.trim() || undefined,
       cnic: cnic.trim() || undefined,
       cnicDocUrl: cnicDocUrl.trim() || undefined,
       licenseNo: licenseNo.trim() || undefined,
@@ -614,14 +618,16 @@ export default function StaffManagement() {
   const cleanSearch = searchQuery.toLowerCase().trim();
   const filteredStaff = staff.filter(s => {
     if (plantFilter === 'plant1') {
-      const isP1 = (s.category && s.category.toLowerCase().includes('plant 1')) ||
+      const isP1 = (s.plant && s.plant.toLowerCase().includes('plant 1')) ||
+                   (s.category && s.category.toLowerCase().includes('plant 1')) ||
                    (s.designation && s.designation.toLowerCase().includes('plant 1')) ||
                    (s.address && s.address.toLowerCase().includes('plant 1')) ||
                    (s.notes && s.notes.toLowerCase().includes('plant 1'));
       if (!isP1) return false;
     }
     if (plantFilter === 'plant2') {
-      const isP2 = (s.category && s.category.toLowerCase().includes('plant 2')) ||
+      const isP2 = (s.plant && s.plant.toLowerCase().includes('plant 2')) ||
+                   (s.category && s.category.toLowerCase().includes('plant 2')) ||
                    (s.designation && s.designation.toLowerCase().includes('plant 2')) ||
                    (s.address && s.address.toLowerCase().includes('plant 2')) ||
                    (s.notes && s.notes.toLowerCase().includes('plant 2'));
@@ -633,6 +639,7 @@ export default function StaffManagement() {
       (s.phone && s.phone.includes(cleanSearch)) ||
       (s.designation && s.designation.toLowerCase().includes(cleanSearch)) ||
       (s.category && s.category.toLowerCase().includes(cleanSearch)) ||
+      (s.plant && s.plant.toLowerCase().includes(cleanSearch)) ||
       (s.cnic && s.cnic.includes(cleanSearch)) ||
       s.id.toLowerCase().includes(cleanSearch)
     );
@@ -642,6 +649,7 @@ export default function StaffManagement() {
     const stMember = staff.find(s => s.id === p.staffId);
     if (plantFilter === 'plant1') {
       const isP1 = stMember && (
+        (stMember.plant && stMember.plant.toLowerCase().includes('plant 1')) ||
         (stMember.category && stMember.category.toLowerCase().includes('plant 1')) ||
         (stMember.designation && stMember.designation.toLowerCase().includes('plant 1')) ||
         (stMember.address && stMember.address.toLowerCase().includes('plant 1'))
@@ -650,6 +658,7 @@ export default function StaffManagement() {
     }
     if (plantFilter === 'plant2') {
       const isP2 = stMember && (
+        (stMember.plant && stMember.plant.toLowerCase().includes('plant 2')) ||
         (stMember.category && stMember.category.toLowerCase().includes('plant 2')) ||
         (stMember.designation && stMember.designation.toLowerCase().includes('plant 2')) ||
         (stMember.address && stMember.address.toLowerCase().includes('plant 2'))
@@ -1450,7 +1459,14 @@ export default function StaffManagement() {
                           <td className="px-4 py-3 font-bold text-slate-800 whitespace-nowrap">
                             {s.name} <span className="font-mono text-slate-400 block text-[11px]">{s.id}</span>
                           </td>
-                          <td className="px-4 py-3 text-slate-600">{s.category || s.designation}</td>
+                          <td className="px-4 py-3 text-slate-600">
+                            <span className="font-semibold text-slate-800">{s.category || s.designation}</span>
+                            {s.plant && (
+                              <span className="ml-2 inline-block px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-bold">
+                                {s.plant}
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-right font-semibold text-slate-700">Rs. {s.basicSalary.toLocaleString()}</td>
                           <td className="px-4 py-3 text-right font-bold text-amber-700">Rs. {curAdv.toLocaleString()}</td>
                           <td className="px-4 py-3 text-right font-bold text-indigo-700">Rs. {curLoan.toLocaleString()}</td>
@@ -1513,7 +1529,7 @@ export default function StaffManagement() {
             </div>
 
             <form onSubmit={handleSaveStaff} className="flex-1 overflow-y-auto p-5 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Full Name *</label>
                   <input
@@ -1541,6 +1557,26 @@ export default function StaffManagement() {
                     {defaultCategories.map(c => (
                       <option key={c} value={c} />
                     ))}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                    Plant / Workplace <span className="text-slate-400 font-normal lowercase">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    list="staff-plants-list"
+                    placeholder="e.g. Plant 1, Plant 2, Head Office..."
+                    value={staffPlant}
+                    onChange={e => setStaffPlant(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 bg-white"
+                  />
+                  <datalist id="staff-plants-list">
+                    <option value="Plant 1" />
+                    <option value="Plant 2" />
+                    <option value="Head Office" />
+                    <option value="Workshop" />
                   </datalist>
                 </div>
               </div>
