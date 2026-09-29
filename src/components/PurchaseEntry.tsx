@@ -32,6 +32,7 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [isPrintingAll, setIsPrintingAll] = useState(false);
 
   // Modals & Print Job
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -666,7 +667,13 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
               <span>Download CSV</span>
             </button>
             <button
-              onClick={() => window.print()}
+              onClick={() => {
+                setIsPrintingAll(true);
+                setTimeout(() => {
+                  window.print();
+                  setIsPrintingAll(false);
+                }, 150);
+              }}
               className="flex items-center space-x-2 bg-slate-800 text-white hover:bg-slate-900 px-3 py-2 rounded-lg text-sm font-medium transition"
             >
               <Printer className="h-4 w-4" />
@@ -718,7 +725,7 @@ export default function PurchaseEntry({ preselectedVendorId, onClearPreselectedV
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-sm">
-                  {paginatedPurchases.map(p => {
+                  {(isPrintingAll ? filteredPurchases : paginatedPurchases).map(p => {
                     const vend = vendors.find(v => v.id === p.vendorId);
                     const singleItem = items.find(i => i.id === p.itemId);
 

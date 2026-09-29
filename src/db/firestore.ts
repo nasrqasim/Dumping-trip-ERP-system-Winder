@@ -83,6 +83,7 @@ export interface DBVehicle {
   regExpiry?: string;
   fitnessExpiry?: string;
   insuranceExpiry?: string;
+  ownershipType?: 'private' | 'public';
   notes?: string;
 }
 
@@ -149,6 +150,7 @@ export interface DBDieselTransaction {
   fuelType?: 'Diesel' | 'Petrol' | 'Mobil Oil';
   tripId?: string;
   receiptNo?: string;
+  slipDocUrl?: string;
   notes?: string;
 }
 
@@ -330,6 +332,10 @@ export interface DBTrip {
   driverCnic?: string;
   driverPhone?: string;
   vehicleModel?: string;
+  shift?: 'Day Shift' | 'Night Shift';
+  vehicleOwnership?: 'private' | 'public';
+  dieselSlipUrl?: string;
+  dieselSlipNo?: string;
   tripStatus?: 'active' | 'completed' | 'cancelled';
 }
 

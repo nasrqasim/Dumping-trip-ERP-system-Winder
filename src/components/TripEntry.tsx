@@ -28,7 +28,8 @@ import {
 import { 
   Truck, Plus, Trash, Edit, ArrowRight, Printer, AlertTriangle, Download, 
   Search, X, FileText, UserCheck, Wallet, ShieldAlert, Calendar, Clock, 
-  MapPin, Gauge, Timer, CheckCircle, Navigation, Layers, Info, Fuel
+  MapPin, Gauge, Timer, CheckCircle, Navigation, Layers, Info, Fuel,
+  Camera, Upload, Eye, Image as ImageIcon
 } from 'lucide-react';
 import SearchableSelect from './SearchableSelect';
 import Pagination from './Pagination';
@@ -93,6 +94,9 @@ export default function TripEntry() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [billingFilter, setBillingFilter] = useState<'all' | 'fixed' | 'hourly'>('all');
+  const [vehicleScopeFilter, setVehicleScopeFilter] = useState<'all' | 'private' | 'public'>('all');
+  const [isPrintingAll, setIsPrintingAll] = useState(false);
+  const [viewingSlipUrl, setViewingSlipUrl] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
@@ -104,6 +108,8 @@ export default function TripEntry() {
   // Form Field States
   const [editingId, setEditingId] = useState<string | null>(null);
   const [billingType, setBillingType] = useState<'fixed' | 'hourly'>('fixed');
+  const [shift, setShift] = useState<'Day Shift' | 'Night Shift'>('Day Shift');
+  const [vehicleOwnership, setVehicleOwnership] = useState<'private' | 'public'>('private');
   const [tripStatus, setTripStatus] = useState<'active' | 'completed' | 'cancelled'>('completed');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [vehicleId, setVehicleId] = useState('');
@@ -149,8 +155,61 @@ export default function TripEntry() {
   const [tripDieselPaidAmount, setTripDieselPaidAmount] = useState<number | ''>(0);
   const [isDieselPaidTouched, setIsDieselPaidTouched] = useState<boolean>(false);
   const [tripDieselSlipNo, setTripDieselSlipNo] = useState('');
+  const [tripDieselSlipUrl, setTripDieselSlipUrl] = useState('');
+  const [isUploadingSlip, setIsUploadingSlip] = useState(false);
   const [tripDieselPaymentType, setTripDieselPaymentType] = useState<'Credit' | 'Cash' | 'Bank'>('Credit');
   const [tripDieselBankId, setTripDieselBankId] = useState('');
+
+  const handleSlipUpload = (file: File) => {
+    if (!file) return;
+    setIsUploadingSlip(true);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          const maxDim = 1200;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            setTripDieselSlipUrl(dataUrl);
+          } else {
+            setTripDieselSlipUrl(e.target?.result as string);
+          }
+        } catch (err) {
+          console.error('Error compressing slip image:', err);
+          setTripDieselSlipUrl(e.target?.result as string);
+        } finally {
+          setIsUploadingSlip(false);
+        }
+      };
+      img.onerror = () => {
+        setIsUploadingSlip(false);
+        alert('Could not process slip image. Please try another image.');
+      };
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => {
+      setIsUploadingSlip(false);
+      alert('Failed to read image file.');
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Driver Advance & Trip Settlement States
   const [driverAdvanceDeducted, setDriverAdvanceDeducted] = useState<number | ''>('');
@@ -259,6 +318,9 @@ export default function TripEntry() {
 
     const selectedVeh = vehicles.find(v => v.id === vId);
     if (selectedVeh) {
+      if (selectedVeh.ownershipType) {
+        setVehicleOwnership(selectedVeh.ownershipType);
+      }
       if (selectedVeh.driver) setDriverName(selectedVeh.driver);
       if (selectedVeh.driverCnic) setDriverCnic(selectedVeh.driverCnic);
       if (selectedVeh.driverPhone) setDriverPhone(selectedVeh.driverPhone);
@@ -399,6 +461,8 @@ export default function TripEntry() {
     if (trip) {
       setEditingId(trip.id);
       setBillingType(trip.billingType || (trip.totalHours ? 'hourly' : 'fixed'));
+      setShift(trip.shift || 'Day Shift');
+      setVehicleOwnership(trip.vehicleOwnership || 'private');
       setTripStatus(trip.tripStatus || 'completed');
       setDate(trip.date);
       setVehicleId(trip.vehicleId || '');
@@ -461,7 +525,8 @@ export default function TripEntry() {
         setTripDieselLitres('');
       }
       setTripDieselVendorId('');
-      setTripDieselSlipNo('');
+      setTripDieselSlipNo(trip.dieselSlipNo || '');
+      setTripDieselSlipUrl(trip.dieselSlipUrl || '');
       setTripDieselPaymentType('Credit');
       setExpenses((trip.expenses || []).filter(e => e.category !== 'Diesel'));
       setDriverAdvanceDeducted('');
@@ -472,6 +537,8 @@ export default function TripEntry() {
     } else {
       setEditingId(null);
       setBillingType('fixed');
+      setShift('Day Shift');
+      setVehicleOwnership('private');
       setTripStatus('completed');
       setDate(new Date().toISOString().split('T')[0]);
       setCustomerId('walk-in');
@@ -504,6 +571,7 @@ export default function TripEntry() {
       setTripDieselPaidAmount(0);
       setIsDieselPaidTouched(false);
       setTripDieselSlipNo('');
+      setTripDieselSlipUrl('');
       setTripDieselPaymentType('Credit');
       setTripDieselBankId(banks.length > 0 ? banks[0].id : '');
       setDriverAdvanceDeducted('');
@@ -631,6 +699,10 @@ export default function TripEntry() {
       id: tripId,
       date,
       billingType,
+      shift: billingType === 'hourly' ? shift : undefined,
+      vehicleOwnership,
+      dieselSlipUrl: tripDieselSlipUrl || undefined,
+      dieselSlipNo: tripDieselSlipNo.trim() || undefined,
       tripStatus,
       vehicleId: vehicleId.trim() || '',
       vehicleModel: vehicleModel.trim() || '',
@@ -800,9 +872,11 @@ export default function TripEntry() {
 
   const handlePrintAllTripsLedger = () => {
     setActivePrintJob(null);
+    setIsPrintingAll(true);
     setTimeout(() => {
       window.print();
-    }, 100);
+      setIsPrintingAll(false);
+    }, 150);
   };
 
   const handleDownloadTripsCSV = () => {
@@ -900,6 +974,13 @@ export default function TripEntry() {
     if (billingFilter === 'hourly' && t.billingType !== 'hourly') return false;
     if (billingFilter === 'fixed' && t.billingType === 'hourly') return false;
 
+    // Vehicle Scope filter (Private fleet vs Public / Commercial)
+    if (vehicleScopeFilter !== 'all') {
+      const veh = vehicles.find(v => v.id === t.vehicleId);
+      const scope = t.vehicleOwnership || veh?.ownershipType || 'private';
+      if (scope !== vehicleScopeFilter) return false;
+    }
+
     // Search query filter
     if (!cleanSearch) return true;
     const cust = customers.find(c => c.id === t.customerId);
@@ -918,6 +999,18 @@ export default function TripEntry() {
       (veh && veh.number.toLowerCase().includes(cleanSearch))
     );
   });
+
+  const privateTrips = filteredTrips.filter(t => {
+    const v = vehicles.find(veh => veh.id === t.vehicleId);
+    return (t.vehicleOwnership || v?.ownershipType || 'private') === 'private';
+  });
+  const publicTrips = filteredTrips.filter(t => {
+    const v = vehicles.find(veh => veh.id === t.vehicleId);
+    return (t.vehicleOwnership || v?.ownershipType || 'private') === 'public';
+  });
+
+  const privateFreight = privateTrips.reduce((s, t) => s + (t.vehicleCharges || 0), 0);
+  const publicFreight = publicTrips.reduce((s, t) => s + (t.vehicleCharges || 0), 0);
 
   const paginatedTrips = filteredTrips.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
@@ -1275,28 +1368,55 @@ export default function TripEntry() {
             </div>
 
             {/* Mode Filter Toggle */}
-            <div className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setBillingFilter('all')}
-                className={`px-3 py-1.5 rounded-md transition ${billingFilter === 'all' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
-              >
-                All Entries ({trips.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setBillingFilter('fixed')}
-                className={`px-3 py-1.5 rounded-md transition ${billingFilter === 'fixed' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
-              >
-                Standard Trips ({trips.filter(t => t.billingType !== 'hourly').length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setBillingFilter('hourly')}
-                className={`px-3 py-1.5 rounded-md transition ${billingFilter === 'hourly' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
-              >
-                Hourly Rentals ({trips.filter(t => t.billingType === 'hourly').length})
-              </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setBillingFilter('all')}
+                  className={`px-3 py-1.5 rounded-md transition ${billingFilter === 'all' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  All ({trips.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBillingFilter('fixed')}
+                  className={`px-3 py-1.5 rounded-md transition ${billingFilter === 'fixed' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  Standard ({trips.filter(t => t.billingType !== 'hourly').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBillingFilter('hourly')}
+                  className={`px-3 py-1.5 rounded-md transition ${billingFilter === 'hourly' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  Hourly ({trips.filter(t => t.billingType === 'hourly').length})
+                </button>
+              </div>
+
+              {/* Public vs Private Vehicle Scope Filter */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setVehicleScopeFilter('all')}
+                  className={`px-3 py-1.5 rounded-md transition ${vehicleScopeFilter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  All Vehicles
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVehicleScopeFilter('private')}
+                  className={`px-3 py-1.5 rounded-md transition ${vehicleScopeFilter === 'private' ? 'bg-white text-emerald-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  Private Fleet ({trips.filter(t => (t.vehicleOwnership || vehicles.find(v => v.id === t.vehicleId)?.ownershipType || 'private') === 'private').length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVehicleScopeFilter('public')}
+                  className={`px-3 py-1.5 rounded-md transition ${vehicleScopeFilter === 'public' ? 'bg-white text-blue-700 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  Public Vehicles ({trips.filter(t => (t.vehicleOwnership || vehicles.find(v => v.id === t.vehicleId)?.ownershipType || 'private') === 'public').length})
+                </button>
+              </div>
             </div>
 
             {/* Date Pickers */}
@@ -1338,26 +1458,37 @@ export default function TripEntry() {
           </div>
         </div>
 
-        {/* Filtered Statistics Summary Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 no-print">
+        {/* Filtered Statistics Summary Cards with Separate Public and Private Counting */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 no-print">
           <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs">
-            <p className="text-[11px] font-medium text-slate-500">Total Filtered</p>
-            <p className="text-lg font-black text-slate-800">{filteredTrips.length}</p>
+            <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Total Filtered</p>
+            <p className="text-lg font-black text-slate-800">{filteredTrips.length} <span className="text-xs font-medium text-slate-500">Bills</span></p>
+            <p className="text-[10px] text-slate-500 mt-0.5">All matching trips</p>
+          </div>
+          <div className="bg-emerald-50/70 p-3 rounded-lg border border-emerald-200 shadow-xs">
+            <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wide">Private Fleet</p>
+            <p className="text-lg font-black text-emerald-700">{privateTrips.length} <span className="text-xs font-semibold text-emerald-600">Bills</span></p>
+            <p className="text-[10px] text-emerald-800 font-bold mt-0.5">Rs. {privateFreight.toLocaleString()}</p>
+          </div>
+          <div className="bg-blue-50/70 p-3 rounded-lg border border-blue-200 shadow-xs">
+            <p className="text-[11px] font-bold text-blue-800 uppercase tracking-wide">Public Vehicles</p>
+            <p className="text-lg font-black text-blue-700">{publicTrips.length} <span className="text-xs font-semibold text-blue-600">Bills</span></p>
+            <p className="text-[10px] text-blue-800 font-bold mt-0.5">Rs. {publicFreight.toLocaleString()}</p>
           </div>
           <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs">
-            <p className="text-[11px] font-medium text-slate-500">Vehicle Freight / Rent</p>
+            <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Total Freight / Rent</p>
             <p className="text-lg font-black text-indigo-700">Rs. {filteredTrips.reduce((s, t) => s + (t.vehicleCharges || 0), 0).toLocaleString()}</p>
           </div>
           <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs">
-            <p className="text-[11px] font-medium text-slate-500">Trip Expenses</p>
+            <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Trip Expenses</p>
             <p className="text-lg font-black text-rose-600">Rs. {filteredTrips.reduce((s, t) => s + (t.totalExpenses || 0), 0).toLocaleString()}</p>
           </div>
           <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs">
-            <p className="text-[11px] font-medium text-slate-500">Net Logistics Profit</p>
+            <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Net Profit</p>
             <p className="text-lg font-black text-emerald-600">Rs. {filteredTrips.reduce((s, t) => s + (t.netTripProfit || 0), 0).toLocaleString()}</p>
           </div>
           <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs col-span-2 sm:col-span-1">
-            <p className="text-[11px] font-medium text-slate-500">Total Invoiced</p>
+            <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">Total Invoiced</p>
             <p className="text-lg font-black text-slate-900">Rs. {filteredTrips.reduce((s, t) => s + (t.grandTotal || 0), 0).toLocaleString()}</p>
           </div>
         </div>
@@ -1381,9 +1512,10 @@ export default function TripEntry() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {paginatedTrips.map(t => {
+                {(isPrintingAll ? filteredTrips : paginatedTrips).map(t => {
                   const cust = customers.find(c => c.id === t.customerId);
                   const veh = vehicles.find(v => v.id === t.vehicleId);
+                  const vehScope = t.vehicleOwnership || veh?.ownershipType || 'private';
 
                   return (
                     <tr key={t.id} className="hover:bg-slate-50/70 transition">
@@ -1392,20 +1524,32 @@ export default function TripEntry() {
                         <span className="text-xs text-slate-500">{t.date}</span>
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap">
-                        {t.billingType === 'hourly' ? (
-                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                            <Clock className="h-3 w-3" />
-                            <span>Hourly ({t.totalHours || 0}h)</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
-                            <Truck className="h-3 w-3" />
-                            <span>Standard Trip</span>
-                          </span>
-                        )}
+                        <div className="flex flex-wrap items-center gap-1">
+                          {t.billingType === 'hourly' ? (
+                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                              <Clock className="h-3 w-3" />
+                              <span>Hourly ({t.totalHours || 0}h)</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">
+                              <Truck className="h-3 w-3" />
+                              <span>Standard</span>
+                            </span>
+                          )}
+                          {t.shift && (
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200">
+                              {t.shift === 'Night Shift' ? '🌙 Night' : '☀️ Day'}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap">
-                        <p className="font-bold text-slate-800">{veh?.number || (t.vehicleId ? t.vehicleId : '— (Direct / None)')}</p>
+                        <div className="flex items-center space-x-1.5">
+                          <p className="font-bold text-slate-800">{veh?.number || (t.vehicleId ? t.vehicleId : '— (Direct / None)')}</p>
+                          <span className={`inline-block px-1.5 py-0.2 rounded text-[9px] font-black uppercase ${vehScope === 'public' ? 'bg-blue-100 text-blue-800 border border-blue-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>
+                            {vehScope === 'public' ? 'Public' : 'Private'}
+                          </span>
+                        </div>
                         <p className="text-xs text-slate-500">{t.driverName || '—'} {t.driverPhone ? `• ${t.driverPhone}` : ''}</p>
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap">
@@ -1454,6 +1598,17 @@ export default function TripEntry() {
                       </td>
                       <td className="px-3 py-3 text-right whitespace-nowrap no-print">
                         <div className="flex items-center justify-end space-x-1">
+                          {t.dieselSlipUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setViewingSlipUrl(t.dieselSlipUrl || null)}
+                              className="p-1.5 text-amber-700 hover:text-amber-900 hover:bg-amber-100 rounded transition flex items-center space-x-1 text-xs font-bold"
+                              title="View / Download Diesel Pump Slip"
+                            >
+                              <Camera className="h-3.5 w-3.5" />
+                              <span>Slip</span>
+                            </button>
+                          )}
                           <button
                             onClick={() => handlePrintReceipt(t)}
                             className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded transition"
@@ -1576,8 +1731,8 @@ export default function TripEntry() {
                 </div>
               </div>
 
-              {/* Top Row: Date, Vehicle, Driver Details */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50/50 p-4 rounded-xl border border-slate-200">
+              {/* Top Row: Date, Vehicle, Driver Details, Vehicle Scope */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-50/50 p-4 rounded-xl border border-slate-200">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                     Date *
@@ -1601,7 +1756,7 @@ export default function TripEntry() {
                       ...vehicles.map(v => ({
                         value: v.id,
                         label: `${v.number} (${v.type || 'Vehicle'})`,
-                        subLabel: `${v.driver ? `Driver: ${v.driver}` : 'No driver'} • Cat: ${v.category || 'tons'}${v.hourlyRate ? ` • Rs. ${v.hourlyRate}/hr` : ''}`,
+                        subLabel: `${v.driver ? `Driver: ${v.driver}` : 'No driver'} • Scope: ${v.ownershipType === 'public' ? 'Public' : 'Private'} • Cat: ${v.category || 'tons'}${v.hourlyRate ? ` • Rs. ${v.hourlyRate}/hr` : ''}`,
                         searchTerms: `${v.number} ${v.type} ${v.driver || ''} ${v.model || ''}`,
                       }))
                     ]}
@@ -1632,6 +1787,20 @@ export default function TripEntry() {
                     />
                   </div>
                 </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Vehicle Scope / Ownership *
+                  </label>
+                  <select
+                    value={vehicleOwnership}
+                    onChange={e => setVehicleOwnership(e.target.value as 'private' | 'public')}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:border-indigo-500 font-bold text-slate-800"
+                  >
+                    <option value="private">Private (Company Own Fleet)</option>
+                    <option value="public">Public (Commercial / Market)</option>
+                  </select>
+                </div>
               </div>
 
               {/* Hourly Rental Specific Panel (Active when Hourly selected) */}
@@ -1647,7 +1816,20 @@ export default function TripEntry() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+                    {/* Shift Selector */}
+                    <div>
+                      <label className="block text-xs font-bold text-amber-950 mb-1">Shift (شفٹ) *</label>
+                      <select
+                        value={shift}
+                        onChange={e => setShift(e.target.value as 'Day Shift' | 'Night Shift')}
+                        className="w-full px-3 py-2 border-2 border-amber-400 rounded-lg text-sm bg-white font-black text-amber-950 focus:outline-none focus:border-amber-600"
+                      >
+                        <option value="Day Shift">☀️ Day Shift (دن شفٹ)</option>
+                        <option value="Night Shift">🌙 Night Shift (رات شفٹ)</option>
+                      </select>
+                    </div>
+
                     {/* Departure Time */}
                     <div>
                       <div className="flex justify-between items-center mb-1">
@@ -1990,15 +2172,70 @@ export default function TripEntry() {
 
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 uppercase mb-1">
-                      Slip / Invoice #
+                      Pump Slip / Photo
                     </label>
-                    <input
-                      type="text"
-                      placeholder="Pump Slip #"
-                      value={tripDieselSlipNo}
-                      onChange={e => setTripDieselSlipNo(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs"
-                    />
+                    {tripDieselSlipUrl ? (
+                      <div className="flex items-center space-x-1.5 p-1 bg-amber-50 border border-amber-300 rounded-lg">
+                        <img
+                          src={tripDieselSlipUrl}
+                          alt="Slip"
+                          onClick={() => setViewingSlipUrl(tripDieselSlipUrl)}
+                          className="w-8 h-8 object-cover rounded cursor-pointer border border-amber-400 hover:opacity-80 shrink-0"
+                          title="Click to view slip photo"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => setViewingSlipUrl(tripDieselSlipUrl)}
+                            className="text-[10px] font-bold text-indigo-700 hover:underline flex items-center space-x-0.5"
+                          >
+                            <Eye className="w-3 h-3 shrink-0" />
+                            <span>Preview</span>
+                          </button>
+                          <input
+                            type="text"
+                            placeholder="Slip # (optional)"
+                            value={tripDieselSlipNo}
+                            onChange={e => setTripDieselSlipNo(e.target.value)}
+                            className="w-full text-[10px] px-1 py-0.5 border border-slate-300 rounded mt-0.5"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { setTripDieselSlipUrl(''); }}
+                          className="text-rose-500 hover:text-rose-700 p-0.5"
+                          title="Remove slip photo"
+                        >
+                          <Trash className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <label className={`flex items-center justify-center space-x-1 px-2 py-1.5 border-2 border-dashed border-indigo-400 hover:border-indigo-600 bg-indigo-50/60 hover:bg-indigo-100/60 text-indigo-700 rounded-lg cursor-pointer transition text-xs font-bold ${isUploadingSlip ? 'opacity-50 cursor-wait' : ''}`}>
+                          <Camera className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{isUploadingSlip ? 'Processing...' : 'Upload Slip'}</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={e => {
+                              if (e.target.files && e.target.files[0]) {
+                                handleSlipUpload(e.target.files[0]);
+                              }
+                            }}
+                            disabled={isUploadingSlip}
+                            className="hidden"
+                          />
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Or Slip # manually"
+                          value={tripDieselSlipNo}
+                          onChange={e => setTripDieselSlipNo(e.target.value)}
+                          className="w-full px-2 py-0.5 border border-slate-200 rounded text-[10px]"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -2441,6 +2678,56 @@ export default function TripEntry() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Diesel Pump Slip Viewer & Downloader Modal */}
+      {viewingSlipUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs no-print">
+          <div className="bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh] animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between p-4 bg-slate-900 text-white border-b border-slate-800">
+              <div className="flex items-center space-x-2">
+                <ImageIcon className="h-5 w-5 text-indigo-400" />
+                <div>
+                  <h3 className="font-bold text-sm">Diesel Pump Slip Photo</h3>
+                  <p className="text-[11px] text-slate-400">View or download pump slip receipt image</p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <a
+                  href={viewingSlipUrl}
+                  download={`diesel-slip-${Date.now()}.jpg`}
+                  className="flex items-center space-x-1 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setViewingSlipUrl(null)}
+                  className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 flex-1 overflow-auto flex items-center justify-center bg-slate-100 min-h-[300px]">
+              <img
+                src={viewingSlipUrl}
+                alt="Diesel Slip"
+                className="max-h-[70vh] w-auto max-w-full object-contain rounded-lg shadow-md border border-slate-300"
+              />
+            </div>
+            <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewingSlipUrl(null)}
+                className="px-4 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-lg transition"
+              >
+                Close Preview
+              </button>
+            </div>
           </div>
         </div>
       )}

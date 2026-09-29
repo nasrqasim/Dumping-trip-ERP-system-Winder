@@ -70,6 +70,8 @@ export default function Vehicles() {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterActive, setFilterActive] = useState<string>('active'); // 'all', 'active', 'inactive'
+  const [filterOwnership, setFilterOwnership] = useState<string>('all'); // 'all', 'private', 'public'
+  const [isPrintingAll, setIsPrintingAll] = useState(false);
 
   // Modal / Detail States
   const [viewDetailVehicle, setViewDetailVehicle] = useState<DBVehicle | null>(null);
@@ -81,6 +83,7 @@ export default function Vehicles() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [number, setNumber] = useState('');
+  const [ownershipType, setOwnershipType] = useState<'private' | 'public'>('private');
   const [category, setCategory] = useState<'tons' | 'hours' | 'trips' | 'truck'>('tons');
   const [measurement, setMeasurement] = useState<'tons' | 'hours' | 'trips'>('tons');
   const [type, setType] = useState('Dump Truck 10-Wheeler');
@@ -173,6 +176,7 @@ export default function Vehicles() {
     if (veh) {
       setEditingId(veh.id);
       setNumber(veh.number);
+      setOwnershipType(veh.ownershipType || 'private');
       setCategory(veh.category || 'tons');
       setMeasurement(veh.measurement || 'tons');
       setType(veh.type || 'Dump Truck');
@@ -204,6 +208,7 @@ export default function Vehicles() {
     } else {
       setEditingId(null);
       setNumber('');
+      setOwnershipType('private');
       setCategory('tons');
       setMeasurement('tons');
       setType('Dump Truck 10-Wheeler');
@@ -258,6 +263,7 @@ export default function Vehicles() {
       const vehData: DBVehicle = {
         id: editingId || `veh_${Date.now()}`,
         number: number.trim().toUpperCase(),
+        ownershipType,
         category,
         measurement,
         type: type.trim(),
@@ -360,6 +366,8 @@ export default function Vehicles() {
       if (filterActive === 'inactive' && v.active !== false) return false;
       if (filterCategory !== 'all' && v.category !== filterCategory) return false;
       if (filterStatus !== 'all' && v.status !== filterStatus) return false;
+      if (filterOwnership === 'private' && (v.ownershipType || 'private') !== 'private') return false;
+      if (filterOwnership === 'public' && v.ownershipType !== 'public') return false;
       if (!cleanSearch) return true;
       return (
         v.number.toLowerCase().includes(cleanSearch) ||
@@ -373,7 +381,7 @@ export default function Vehicles() {
         v.id.toLowerCase().includes(cleanSearch)
       );
     });
-  }, [vehicles, filterActive, filterCategory, filterStatus, cleanSearch]);
+  }, [vehicles, filterActive, filterCategory, filterStatus, filterOwnership, cleanSearch]);
 
   const paginatedVehicles = useMemo(() => {
     return filteredVehicles.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -621,15 +629,33 @@ export default function Vehicles() {
                 <option value="inactive">Inactive Fleet Only</option>
                 <option value="all">Show All (Active + Inactive)</option>
               </select>
+
+              {/* Ownership Filter */}
+              <select
+                value={filterOwnership}
+                onChange={e => setFilterOwnership(e.target.value)}
+                className="px-3 py-2 border border-slate-200 rounded-lg text-xs font-semibold bg-white text-slate-700 focus:outline-none focus:border-indigo-500"
+              >
+                <option value="all">🌐 All Fleet (Private + Public)</option>
+                <option value="private">🏢 Private (Own Fleet)</option>
+                <option value="public">🌍 Public (Commercial / Third-Party)</option>
+              </select>
             </div>
 
             <div className="flex items-center space-x-2">
               <button
-                onClick={() => window.print()}
+                onClick={() => {
+                  setIsPrintingAll(true);
+                  setTimeout(() => {
+                    window.print();
+                    setIsPrintingAll(false);
+                  }, 150);
+                }}
                 className="flex items-center space-x-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3.5 py-2 rounded-lg text-xs font-semibold transition"
+                title="Print complete roster of vehicles"
               >
                 <Printer className="h-4 w-4" />
-                <span>Print Fleet Roster</span>
+                <span>Print Fleet Ledger ({filteredVehicles.length})</span>
               </button>
               <button
                 onClick={() => handleOpenForm()}
@@ -654,7 +680,7 @@ export default function Vehicles() {
               </div>
               <p className="text-sm font-bold text-slate-600 tracking-wider uppercase mt-1">FLEET MASTERS &amp; VEHICLE DIRECTORY</p>
               <div className="flex justify-between items-center text-xs font-mono font-bold text-slate-700 mt-3 px-2">
-                <div>Total Fleet: {vehicles.length} Vehicles</div>
+                <div>Total Fleet: {filteredVehicles.length} Vehicles</div>
                 <div>Generated: {new Date().toLocaleDateString('en-GB')}</div>
               </div>
             </div>
@@ -675,7 +701,7 @@ export default function Vehicles() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-xs">
-                    {paginatedVehicles.map(veh => {
+                    {(isPrintingAll ? filteredVehicles : paginatedVehicles).map(veh => {
                       const isFree = veh.active !== false && (veh.status === 'available' || !veh.status);
                       const isOnTrip = veh.status === 'on_trip';
                       const isMaint = veh.status === 'maintenance';
@@ -684,7 +710,16 @@ export default function Vehicles() {
                       return (
                         <tr key={veh.id} className="hover:bg-slate-50/75 transition">
                           <td className="px-5 py-3.5">
-                            <div className="font-black text-slate-900 text-sm tracking-wide">{veh.number}</div>
+                            <div className="flex items-center space-x-2">
+                              <span className="font-black text-slate-900 text-sm tracking-wide">{veh.number}</span>
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                veh.ownershipType === 'public'
+                                  ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              }`}>
+                                {veh.ownershipType === 'public' ? 'Public' : 'Private'}
+                              </span>
+                            </div>
                             <div className="text-[11px] font-medium text-slate-500">{veh.type || 'Commercial Vehicle'}</div>
                             {veh.ownerName && (
                               <div className="text-[10px] text-slate-400">Owner: {veh.ownerName}</div>
@@ -1279,7 +1314,7 @@ export default function Vehicles() {
             </div>
 
             <form onSubmit={handleSave} className="p-6 overflow-y-auto space-y-4 flex-1 text-xs">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
                   <label className="block font-bold text-slate-600 mb-1">Vehicle / Reg # *</label>
                   <input
@@ -1290,6 +1325,17 @@ export default function Vehicles() {
                     placeholder="e.g. TLK-1234, T-440"
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg uppercase font-bold focus:outline-none focus:border-indigo-500"
                   />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-600 mb-1">Ownership / Scope *</label>
+                  <select
+                    value={ownershipType}
+                    onChange={e => setOwnershipType(e.target.value as 'private' | 'public')}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg font-bold bg-white focus:outline-none focus:border-indigo-500 text-indigo-950"
+                  >
+                    <option value="private">Private (Own Fleet)</option>
+                    <option value="public">Public (Commercial / Market)</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block font-bold text-slate-600 mb-1">Operating Category *</label>
